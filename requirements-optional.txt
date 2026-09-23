@@ -1,0 +1,4 @@
+# Optional analysis and camera utilities.
+opencv-python>=4.7
+# pyrealsense2 is platform-specific; install it only on the camera host.
+pyrealsense2>=2.54

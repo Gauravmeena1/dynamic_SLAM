@@ -1,0 +1,27 @@
+# Local configuration (may contain hostnames, IPs, and machine-specific paths)
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Generated mapping artifacts
+artifacts/
+kachaka_2d_*.png
+kachaka_2d_*.yaml
+traj_*.csv
+goals_*.csv
+pose2d_*.csv
+pose2d_*.log
+align_*/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
