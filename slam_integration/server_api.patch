@@ -1,0 +1,59 @@
+--- a/src/ma_slam_stream/server_api.py
++++ b/src/ma_slam_stream/server_api.py
+@@ -145,7 +145,10 @@
+ 
+         self.source = HttpFrameSource(a.keyframe_disparity)
+         self.hooks = srv.acquire_hooks(out_dir, name)
+-        self.slam = MaSlam(config=cfg, model=srv.geo_model, device=a.device, hooks=self.hooks)
++        # dynamic-object masking: FusionMaSlam == MaSlam when masker is None
++        from ma_slam.fusion_solver import FusionMaSlam
++        self.slam = FusionMaSlam(config=cfg, model=srv.geo_model, device=a.device,
++                                 hooks=self.hooks, masker=getattr(srv, "masker", None))
+         if srv.retrieval is not None:            # reuse the resident SALAD/DINOv2 retrieval
+             self.slam.retrieval = srv.retrieval
+         # viz is server-wide (rr.serve_web must bind its ports exactly once);
+@@ -153,6 +156,11 @@
+         # self.viz = make_viz(a.viz, a.viz_addr, conf_coef=a.conf_coef,
+         #                     max_points=a.viz_max_points)   # (pre-fix: per-session viewer)
+         self.viz = srv.acquire_viz()
++        # live "what did the masker remove" view (fusion_solver._publish_mask_viz)
++        self.slam.mask_viz_dir = os.path.join(out_dir, "mask_viz")
++        self.slam.viz_rr = self.viz.rr if self.viz is not None else None
++        self.slam.viz_conf_coef = a.conf_coef                 # red layer = same filter/budget as map
++        self.slam.viz_max_points = a.viz_max_points
+         # Progressive viz (2026-07-18): geometry renders as soon as the submap's graph
+         # is optimized (before the ~20s semantic pass); the instance layer then grows
+         # after every sem_chunk_size-frame chunk instead of once per submap.
+@@ -267,6 +275,13 @@
+         if a.semantic:
+             self.sem_hooks = self._build_hooks(os.path.join(a.default_out, "_preload"),
+                                                "preload")
++        # Dynamic-object masker: built ONCE here (loads YOLOv9e-seg + FlowSeek),
++        # then reused by every session, exactly like geo_model above.
++        self.masker = None
++        if getattr(a, "dynamic_mask", False):
++            from ma_slam.fusion_solver import build_masker
++            self.masker = build_masker(device=a.device)
++            print("[server_api] dynamic-object masker resident")
+         self.acquire_viz()                   # web viewer URL prints here, at startup
+         print("[server_api] ===== models resident — gateway may connect =====")
+ 
+@@ -294,6 +309,8 @@
+                 rr.log("world/points", rr.Clear(recursive=True))
+                 rr.log("world/instances", rr.Clear(recursive=True))
+                 rr.log("world/trajectory", rr.Clear(recursive=True))
++                rr.log("world/removed", rr.Clear(recursive=True))
++                rr.log("camera", rr.Clear(recursive=True))
+                 self.viz._logged.clear()
+             except Exception as e:
+                 print(f"[server_api] viz clear skipped ({e})")
+@@ -516,6 +533,9 @@
+     ap.add_argument("--viz_max_points", type=int, default=500_000)
+     # semantic (mirrors run_stream.py)
+     ap.add_argument("--semantic", action="store_true")
++    ap.add_argument("--dynamic_mask", action="store_true",
++                    help="mask dynamic objects before points are created "
++                         "(flow+semantic fusion; see ma_slam/fusion_solver.py)")
+     ap.add_argument("--no_deploy", action="store_true",
+                     help="skip the robot_deploy_* export at /stop (deploy runs by default)")
+     ap.add_argument("--sem_chunk_size", type=int, default=4)

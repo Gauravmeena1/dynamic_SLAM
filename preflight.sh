@@ -143,8 +143,14 @@ case "$fb" in
     array*) ok "手臂在回報 /joint_states_feedback" ;;
     *"free participant index"*) bad "DDS participant 被佔滿（見第 6 項）"
                                 fix "docker exec "$MM" pkill -f \"ros2 topic\"" ;;
-    *) bad "讀不到 /joint_states_feedback：${fb:0:80}"
-       fix "先看 ip -s -d link show can_piper 的 RX 有沒有在漲；沒漲才是真的 CAN/電源問題（ARM-15）" ;;
+    *) if [ "${KACHAKA_ARM_OPTIONAL:-0}" = 1 ]; then
+           # gaurav setup: ~/3D_slam/run_slam_oneshot.sh never moves the arm, so a
+           # missing Piper node is only a warning; check the camera view instead.
+           warn "讀不到 /joint_states_feedback（KACHAKA_ARM_OPTIONAL=1：本流程不動手臂，僅警告）"
+       else
+       bad "讀不到 /joint_states_feedback：${fb:0:80}"
+       fix "先看 ip -s -d link show can_piper 的 RX 有沒有在漲；沒漲才是真的 CAN/電源問題（ARM-15）"
+       fi ;;
 esac
 fi
 

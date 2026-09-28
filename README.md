@@ -138,6 +138,11 @@ python preview_traj.py --help
 - [`docs/ONSITE_REMAP_RUN3_VALIDATION_20260922.md`](docs/ONSITE_REMAP_RUN3_VALIDATION_20260922.md)
 - [`docs/ROBOTIC_AGENT_BUNDLE_VALIDATION_20260922.md`](docs/ROBOTIC_AGENT_BUNDLE_VALIDATION_20260922.md)
 
+## 動態物件遮罩 / Dynamic-object masking
+
+`dynamic_masking/`、`slam_integration/`、`slam_tools/` 讓 3D SLAM 在建圖時即時移除人與移動中的物件，並可即時觀看。安裝與操作步驟見 [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md)。
+`dynamic_masking/`, `slam_integration/` and `slam_tools/` remove people and moving objects from the 3D map while it is built, with a live view. Setup and operation: [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md).
+
 ## 提交前驗證 / Verification before commit
 
 ```bash

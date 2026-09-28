@@ -1,0 +1,16 @@
+--- a/gateway_slam/src/gateway_node_robot.py
++++ b/gateway_slam/src/gateway_node_robot.py
+@@ -258,6 +258,13 @@
+                     f"{TRAJECTORY_FILE}"
+                 )
+ 
++            # extra collector flags, e.g. COLLECT_EXTRA="--keyframe-disparity 0 --blur-k 15"
++            # for a parked camera (gaurav 2026-09-25; the default 25 px gate records ~nothing when static)
++            _extra = os.environ.get("COLLECT_EXTRA", "").split()
++            if _extra:
++                cmd += _extra
++                self.get_logger().info(f"COLLECT_EXTRA: {_extra}")
++
+             if CAMERA_SERIAL:
+                 cmd += [
+                     "--camera-serial",

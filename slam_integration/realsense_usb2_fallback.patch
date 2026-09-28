@@ -1,0 +1,32 @@
+--- a/semantic_slam/src/ma-long/src/ma_slam_stream/realsense.py
++++ b/semantic_slam/src/ma-long/src/ma_slam_stream/realsense.py
+@@ -117,7 +117,28 @@
+         if self.enable_ir:
+             cfg.enable_stream(rs.stream.infrared, 1, self.width, self.height, rs.format.y8, self.fps)
+             cfg.enable_stream(rs.stream.infrared, 2, self.width, self.height, rs.format.y8, self.fps)
+-        profile = self._pipeline.start(cfg)
++        try:
++            profile = self._pipeline.start(cfg)
++        except RuntimeError as e:
++            # USB2 (gaurav 2026-09-25): 848x480 colour+depth is not offered on a USB 2.x
++            # link ("Couldn't resolve requests"). Fall back to native 640x480 (no crop),
++            # which is the same size SLAM receives after the usual crop.
++            if (self.width, self.height) == (640, 480):
++                raise
++            print(f"[realsense] WARNING {self.width}x{self.height}@{self.fps} failed ({e}); "
++                  f"retrying 640x480@{self.fps} -- camera on USB2? use a blue USB3 port")
++            self.width, self.height = 640, 480
++            self._pipeline = rs.pipeline()
++            cfg = rs.config()
++            if self.serial:
++                cfg.enable_device(str(self.serial))
++            cfg.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, self.fps)
++            if self.want_depth:
++                cfg.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, self.fps)
++            if self.enable_ir:
++                cfg.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, self.fps)
++                cfg.enable_stream(rs.stream.infrared, 2, 640, 480, rs.format.y8, self.fps)
++            profile = self._pipeline.start(cfg)
+         _dev = profile.get_device()
+         print(f"[realsense] opened {_dev.get_info(rs.camera_info.name)} "
+               f"serial={_dev.get_info(rs.camera_info.serial_number)}"

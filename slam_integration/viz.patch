@@ -1,0 +1,28 @@
+--- a/src/ma_slam_stream/viz.py
++++ b/src/ma_slam_stream/viz.py
+@@ -73,12 +73,20 @@
+         #                          eye icon in the entity tree to show them)
+         try:
+             import rerun.blueprint as rrb
++            # + world/removed/**  red: pixels the dynamic masker kept out of the map
++            #   camera/mask_overlay  [camera | removed pixels in red], live (fusion_solver)
+             rr.send_blueprint(rrb.Blueprint(
+-                rrb.Spatial3DView(
+-                    origin="world",
+-                    overrides={
+-                        "world/instances/boxes": rrb.EntityBehavior(visible=False),
+-                    },
++                rrb.Horizontal(
++                    rrb.Spatial3DView(
++                        origin="world",
++                        name="map (red = removed by masking)",
++                        overrides={
++                            "world/instances/boxes": rrb.EntityBehavior(visible=False),
++                        },
++                    ),
++                    rrb.Spatial2DView(origin="camera/mask_overlay",
++                                      name="camera | removed pixels"),
++                    column_shares=[3, 2],
+                 ),
+                 collapse_panels=False,
+             ))
