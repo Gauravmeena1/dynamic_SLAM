@@ -1,0 +1,2 @@
+# patch files must reproduce the patched source byte for byte, trailing spaces included
+*.patch -whitespace

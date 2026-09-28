@@ -1,0 +1,403 @@
+"""
+fusion_solver.py — dynamic-object masking wired into the streaming SLAM server.
+================================================================================
+`FusionMaSlam` subclasses `MaSlam` and overrides exactly one method,
+`process_submap`.  `ma_slam/solver.py` itself is never edited: delete this file
+and revert the two lines in `ma_slam_stream/server_api.py` and the server is
+back to stock.
+
+Where the mask goes in, and why
+-------------------------------
+`MaSlam.process_submap` (solver.py:326) has two consecutive statements:
+
+    line 327   out = self._infer(image_paths, depth_paths)
+    line 329   sm  = self._build_submap(base, image_paths, depth_paths, out)
+
+`_infer()` returns exactly the five things `ChunkFusionMasker.mask_chunk()`
+needs — images, depth, poses, intrinsics, world_points_conf — and
+`_build_submap()` is what turns confidence into map points.  Setting the
+confidence of dynamic pixels to 0 in the gap between them means those points
+are *never created*, rather than created and deleted later.  That gap is one
+statement wide and it is the only place in the system where the network output
+exists but the points do not.
+
+The hooks (`on_submap`, `on_loop`, `on_finish`) all fire at solver.py:345 or
+later — after the points exist — so they cannot be used for this.
+
+The conf_threshold trap
+-----------------------
+`Submap.set_geometry` (submap.py:64) derives the point-keeping threshold from
+the confidence array it is handed:
+
+    self.conf_threshold = float(np.mean(conf)) + 1e-6
+
+Zeroing the dynamic pixels *before* that runs drags the mean down and lowers
+the threshold for the whole frame, letting extra weak points in everywhere —
+not just where the movers were.  Measured masked fractions: lab 4.98 %,
+TUM 18.15 %, Bonn crowd 20.65 %, so on a crowded scene the bar would drop by a
+fifth.  We therefore capture the *unmasked* mean before zeroing and restore it
+after the submap is built.  `run_lab_slam_fusion.py:86` does the same thing
+offline; this keeps the server identical to the validated offline pipeline.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from typing import Optional
+
+import numpy as np
+
+try:                                   # torch is always present in this container
+    import torch
+except Exception:                      # pragma: no cover
+    torch = None
+
+from ma_slam.solver import MaSlam
+
+# The masker lives in kachaka_mapping/dynamic_masking/.  This file is installed into the SLAM server
+# (src/ma_slam/fusion_solver.py) as a symlink by slam_integration/install.sh, so its real location
+# is kachaka_mapping/slam_integration/ and the masker is found next to it.  DYNAMIC_MASK_ROOT overrides.
+DYNAMIC_ROOT = os.environ.get(
+    "DYNAMIC_MASK_ROOT",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "dynamic_masking"))
+
+
+def _import_masker():
+    if DYNAMIC_ROOT not in sys.path:
+        sys.path.insert(0, DYNAMIC_ROOT)
+    from chunk_fusion_masker import ChunkFusionMasker      # noqa: E402
+    return ChunkFusionMasker
+
+
+def build_masker(device: str = "cuda", **kw):
+    """Construct the masker once, at server start-up (it loads YOLO + FlowSeek).
+
+    Mirrors run_lab_slam_fusion.py's `g_two_s5_grow` configuration, which is the
+    one the reported results were produced with.
+    """
+    ChunkFusionMasker = _import_masker()
+    from dynamic_fusion import GeometricMaskConfig         # noqa: E402
+    from dynamic_object_mask import DynamicObjectDetector  # noqa: E402
+
+    # person_conf 0.15 (others 0.25) — run_lab_slam_fusion.py:124's validated default
+    semantic = DynamicObjectDetector(
+        os.path.join(DYNAMIC_ROOT, "yolov9e-seg.pt"), device=device,
+        class_conf={0: 0.15})
+    # Retuned 2026-09-24 against mapping_20260922_01 (413 chunk-frames, sweep_fix*.csv).
+    # The shipped adaptive_k=4.0 left the geometric channel SILENT in 50 % of the frames that
+    # contain a person, while spending only 0.25 % of its false-positive budget -- far too
+    # conservative for this capture.  Measured recall (geometric channel fires when a person is
+    # present) against false positives on the 237 person-free frames:
+    #
+    #     adaptive_k  guards  fill   recall   FP frames   FP area   frames declined
+    #        4.0        no     no      50 %      17 %      0.0025          3     <- was shipped
+    #        3.0        no     yes     60 %      28 %      0.0056          3
+    #        3.0       yes     yes     61 %      25 %      0.0044         85     <- adopted
+    #        2.5        no     yes     70 %      38 %      0.0090          3
+    #        2.5       yes     yes     68 %      32 %      0.0064         84
+    #        2.5   tighter     yes     66 %      30 %      0.0068        141
+    #        3.0   tighter     yes     58 %      23 %      0.0046        147
+    #
+    # The guards pay for themselves: at the same k they hold recall and cut false positives,
+    # because the frames they decline are the ones where the flow was untrustworthy anyway.
+    # Tightening them further (6.0 px / sharpness 50) only discards good frames.
+    # k=2.5 buys 7 more points of recall for 45 % more false-positive area; for a mapping
+    # system a false positive deletes real structure, so k=3.0 is the default.  Pass
+    # adaptive_k=2.5 through **kw if recall matters more than fidelity for a given run.
+    geo_cfg = GeometricMaskConfig(
+        ego_motion="pose",      # rigid flow from the DA3 poses
+        adaptive_k=3.0,         # tau = median + 3 * 1.4826 * MAD
+        fb_max_px=1.5,          # forward-backward flow consistency
+        rel_residual=0.0,
+        residual_mode="full",
+        # A person's interior loses its vote wherever a validity gate fires, so the raw mask is
+        # a shell.  Fills only holes fully enclosed by the mask (border flood-fill), so it
+        # cannot grow outwards into the scene.
+        fill_holes=True,
+        fill_close_px=15,
+        # This capture's frames are a median 409 ms apart (p90 2.55 s) because the collector
+        # gates on 25 px of LK disparity, and 29 % of them are below Laplacian variance 50.
+        # Across such a pair the flow is guesswork: decline instead of emitting noise, and let
+        # the semantic channel carry the frame alone.
+        unreliable_threshold_px=8.0,
+        min_sharpness=30.0,
+    )
+    params = dict(
+        # propagate: "sem_bridge", NOT "sem".  "sem" warps a neighbour's person into
+        # frames the person has not entered yet — chunk_fusion_masker.py:274 records 27 %
+        # of a lab frame masked on pure background that way.  "sem_bridge" only fills a
+        # genuine single-frame YOLO gap (k-1 and k+1 both detect, k does not) and is the
+        # mode run_lab_slam_fusion.py:123 defaults to for the reported results.
+        semantic=semantic, geo_cfg=geo_cfg, propagate="sem_bridge",
+        object_policy="moving_or_carried", attach_px=10, motion_thr=0.30,
+        geo_two_sided=True, two_sided_strong_factor=5.0,
+        grow_carried=True, conf_gate_pct=0.0,
+        # 2026-09-28: keep a geometric (optical-flow) blob only if it touches a movable-class detection.
+        # Unanchored blobs on the 0922 capture were static depth edges seen while the camera turned.
+        # Set DYNAMIC_GEO_GATE=none (container env) to get the previous behaviour back.
+        geo_gate=os.environ.get("DYNAMIC_GEO_GATE", "anchor"), geo_anchor_px=30,
+    )
+    params.update(kw)
+    return ChunkFusionMasker(**params)
+
+
+class FusionMaSlam(MaSlam):
+    """MaSlam + per-chunk dynamic-object masking.  `masker=None` == plain MaSlam."""
+
+    def __init__(self, *args, masker=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._masker = masker
+        self.stats.setdefault("n_masked_submaps", 0)
+        self.stats.setdefault("masked_frac_sum", 0.0)
+
+    # ------------------------------------------------------------------ run
+    def process_submap(self, image_paths, depth_paths):
+        out = self._infer(image_paths, depth_paths)            # solver.py:327
+
+        # ---------------- dynamic masking, in the 327 -> 329 gap ----------------
+        conf_mean: Optional[float] = None
+        dyn_keep = None
+        dyn_ch = None                                          # per-channel masks, display only
+        conf_raw_keep = np.asarray(out["world_points_conf"], dtype=np.float32).copy()
+        if self._masker is not None:
+            try:
+                K = out.get("intrinsics")
+                if K is None:
+                    K = self._input_K
+                dyn = self._masker.mask_chunk(
+                    images=out["images"], depth=out["depth"], poses=out["poses"],
+                    intrinsics=K, conf=out["world_points_conf"])
+                if torch is not None and torch.is_tensor(dyn):
+                    dyn = dyn.detach().cpu().numpy()
+                dyn = np.asarray(dyn, dtype=bool)
+                # ChunkFusionMasker(record=True) appends one record per frame holding full-size
+                # sem/geo/prop masks and never drops them (~1 MB/frame for a whole run): take this
+                # chunk's channels for the display, then free them.
+                recs = getattr(self._masker, "records", None)
+                if recs:
+                    mine = recs[-dyn.shape[0]:]
+                    if len(mine) == dyn.shape[0] and all("sem" in r for r in mine):
+                        dyn_ch = {k: np.stack([r[k] for r in mine]) for k in ("sem", "geo", "prop")}
+                    recs.clear()
+
+                conf = np.asarray(out["world_points_conf"], dtype=np.float32)
+                if dyn.shape != conf.shape:                    # never silently mis-apply
+                    raise ValueError(
+                        f"mask shape {dyn.shape} != conf shape {conf.shape}")
+
+                conf_mean = float(np.mean(conf))               # BEFORE zeroing
+                conf_raw_keep = conf.copy()                    # unmasked, for the exports
+                conf = conf.copy()
+                conf[dyn] = 0.0
+                out["world_points_conf"] = conf
+                dyn_keep = dyn
+
+                frac = float(dyn.mean())
+                self.stats["n_masked_submaps"] += 1
+                self.stats["masked_frac_sum"] += frac
+                print(f"[fusion] submap masked {100.0 * frac:.2f}% of pixels "
+                      f"({int(dyn.sum()):,} px)")
+            except Exception as exc:                           # never kill a live run
+                conf_mean = None
+                print(f"[fusion] WARNING: masking skipped for this submap: "
+                      f"{type(exc).__name__}: {exc}")
+        # ------------------------------------------------------------------------
+
+        base = self._next_base
+        sm = self._build_submap(base, image_paths, depth_paths, out)   # solver.py:329
+
+        if conf_mean is not None:
+            # submap.py:64 derived this from the *masked* mean; put the real one back
+            sm.conf_threshold = conf_mean + 1e-6
+        # keep what is needed to export static-only / dynamic-only clouds later
+        sm.dynamic_masks = dyn_keep
+        sm.conf_raw = conf_raw_keep
+
+        # ---- remainder copied verbatim from MaSlam.process_submap (330-345) ----
+        prev = self.map.latest(ignore_lc=True)
+        if prev is None:
+            self._add_first_submap(sm)
+        else:
+            self._add_submap(sm, prev)   # placement + scale handled inside (overlap align)
+        self.map.add(sm)
+        self._next_base += sm.n
+        self.stats["n_submaps"] += 1
+
+        if self.retrieval is not None and prev is not None:
+            self._loop_closure(sm)
+
+        self.graph.optimize()
+
+        if self.hooks is not None:
+            self.hooks.on_submap(sm, self.map, self.graph)   # post-optimize poses
+
+        self._publish_mask_viz(sm, dyn_keep, dyn_ch)
+
+    # ------------------------------------------------------------ live mask viz
+    # Set by the server Session (server_api.py). Display only: nothing below changes
+    # which points enter the map.
+    mask_viz_dir: Optional[str] = None     # <run>/mask_viz/  (jpg per frame)
+    viz_rr = None                          # rerun module when the web viewer is on
+    VIZ_MAX_REMOVED_PTS = 30_000           # hard cap per submap, for the red 3D layer
+    viz_conf_coef: float = 1.0             # same point filter as the map layer (RerunViz)
+    viz_max_points: int = 500_000          # same point budget as the map layer (RerunViz)
+
+    def _publish_mask_viz(self, sm, dyn, ch=None):
+        """Show what the masker removed, while mapping runs.
+
+        * <run>/mask_viz/<frame>.jpg  — [camera | removed pixels], coloured by the channel that
+          removed them: RED = semantic (person / moving-or-carried object), YELLOW = optical-flow
+          motion only, BLUE = temporal bridge only (live_view.py --mask streams these)
+        * <run>/mask_viz/removed.csv  — per frame: total and per-channel % of pixels
+        * rerun camera/mask_overlay   — the same panel in the web viewer
+        * rerun world/removed/*       — removed pixels back-projected as red 3D points
+        """
+        if dyn is None or (self.mask_viz_dir is None and self.viz_rr is None):
+            return
+        try:
+            import cv2
+            rr = self.viz_rr
+            if self.mask_viz_dir:
+                os.makedirs(self.mask_viz_dir, exist_ok=True)
+            red = np.array([255, 0, 0], dtype=np.float32)
+            colours = ((np.array([255, 0, 0], np.float32), (255, 0, 0)),       # semantic
+                       (np.array([255, 210, 0], np.float32), (255, 210, 0)),   # motion only
+                       (np.array([0, 120, 255], np.float32), (0, 120, 255)))   # bridge only
+            if ch is not None and ch["sem"].shape != dyn.shape:
+                ch = None
+            def split(i):                                  # (sem, motion-only, bridge-only)
+                if ch is None:
+                    return (dyn[i], np.zeros_like(dyn[i]), np.zeros_like(dyn[i]))
+                s_ = ch["sem"][i] & dyn[i]
+                g_ = ch["geo"][i] & dyn[i] & ~s_
+                return (s_, g_, dyn[i] & ~s_ & ~g_)
+            # red 3D layer: same confidence filter and same sampling rate as the map layer, so red and
+            # map points are directly comparable (before 2026-09-28 red used a lower threshold and a
+            # larger budget, which over-drew removed points ~2-3x and let in low-confidence edge points)
+            thr = sm.conf_threshold * self.viz_conf_coef
+            n_sub = max(1, sum(1 for s_ in self.map.ordered() if not getattr(s_, "is_lc", False)))
+            budget = max(1, self.viz_max_points // n_sub)
+            valid = sm.conf_raw > thr
+            if getattr(sm, "mask", None) is not None:
+                valid &= sm.mask
+            n_kept = int((valid & ~dyn).sum())
+            rate = min(1.0, budget / max(1, n_kept))
+            removed = []
+            if self.mask_viz_dir:                          # per-frame timeline
+                csv = os.path.join(self.mask_viz_dir, "removed.csv")
+                new = not os.path.exists(csv)
+                with open(csv, "a") as fh:
+                    if new:
+                        fh.write("frame,removed_pct,semantic_pct,motion_only_pct,bridge_only_pct\n")
+                    for i in range(sm.n):
+                        a, b_, c_ = split(i)
+                        fh.write(f"{sm.key(i)},{100.0 * dyn[i].mean():.3f},{100.0 * a.mean():.3f},"
+                                 f"{100.0 * b_.mean():.3f},{100.0 * c_.mean():.3f}\n")
+            for i in range(sm.n):
+                m = dyn[i]
+                rgb = np.ascontiguousarray(sm.colors[i], dtype=np.uint8)
+                over = rgb.copy()
+                parts = split(i)
+                for mm, (fill, edge) in zip(parts, colours):
+                    if mm.any():
+                        over[mm] = (0.45 * rgb[mm] + 0.55 * fill).astype(np.uint8)
+                        cnts, _ = cv2.findContours(mm.astype(np.uint8), cv2.RETR_EXTERNAL,
+                                                   cv2.CHAIN_APPROX_SIMPLE)
+                        cv2.drawContours(over, cnts, -1, edge, 2)
+                frame = sm.key(i)
+                label = (f"frame {frame}  removed {100.0 * m.mean():.1f}%  "
+                         f"(yolo {100.0 * parts[0].mean():.1f} / motion {100.0 * parts[1].mean():.1f})")
+                for col, w in (((0, 0, 0), 3), ((255, 255, 255), 1)):
+                    cv2.putText(over, label, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                                col, w, cv2.LINE_AA)
+                panel = np.concatenate([rgb, over], axis=1)
+                if self.mask_viz_dir:
+                    cv2.imwrite(os.path.join(self.mask_viz_dir, f"{frame:06d}.jpg"),
+                                cv2.cvtColor(panel, cv2.COLOR_RGB2BGR),
+                                [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if rr is not None:
+                    rr.set_time("frame", sequence=frame)
+                    rr.log("camera/mask_overlay", rr.Image(panel).compress(jpeg_quality=80))
+                    sel = m & valid[i]
+                    if sel.any():
+                        M = self.graph.get_pose(sm.key(i)) @ np.linalg.inv(sm.poses_local[i])
+                        Q = sm.points[i][sel]
+                        removed.append(Q @ M[:3, :3].T + M[:3, 3])
+            if rr is not None and removed:
+                P = np.concatenate(removed).astype(np.float32)
+                n_draw = min(self.VIZ_MAX_REMOVED_PTS, int(round(len(P) * rate)))
+                if n_draw < len(P):
+                    idx = np.random.default_rng(sm.base_id).choice(len(P), n_draw, replace=False)
+                    P = P[idx]
+                rr.log(f"world/removed/submap_{sm.base_id}",
+                       rr.Points3D(P, colors=[255, 0, 0]))
+        except Exception as exc:                           # never kill a live run
+            print(f"[fusion] mask viz skipped: {type(exc).__name__}: {exc}")
+
+
+# ---------------------------------------------------------------- extra exports
+def _write_ply(path, xyz, rgb):
+    hdr = ("ply\nformat binary_little_endian 1.0\n"
+           f"element vertex {len(xyz)}\n"
+           "property float x\nproperty float y\nproperty float z\n"
+           "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+           "end_header\n").encode()
+    v = np.empty(len(xyz), dtype=[("x","<f4"),("y","<f4"),("z","<f4"),
+                                  ("red","u1"),("green","u1"),("blue","u1")])
+    v["x"],v["y"],v["z"] = xyz[:,0],xyz[:,1],xyz[:,2]
+    v["red"],v["green"],v["blue"] = rgb[:,0],rgb[:,1],rgb[:,2]
+    with open(path,"wb") as fh:
+        fh.write(hdr); fh.write(v.tobytes())
+
+
+def export_split_clouds(slam, out_dir, max_points=2_000_000, conf_coef=0.75):
+    """Write all_points_pcd.ply / static_only_pcd.ply / dynamic_pcd.ply.
+
+    Same selection maths as ma_slam.map.write_points, but the per-pixel keep mask is
+    intersected with (or inverted against) the dynamic mask this solver stored on each
+    submap.  Mirrors run_lab_slam_fusion.py's export_cloud so the server's outputs are
+    directly comparable with the offline pipeline's.
+    """
+    nonlc = [sm for sm in slam.map.ordered() if not sm.is_lc]
+    if not nonlc or not any(getattr(sm, "dynamic_masks", None) is not None for sm in nonlc):
+        return {}
+    budget = max(1, max_points // max(1, len(nonlc)))
+    rng = np.random.default_rng(0)
+    sels = {
+        "all_points_pcd.ply":   lambda sm, i: np.ones(sm.conf_raw[i].shape, bool),
+        "static_only_pcd.ply":  lambda sm, i: (np.ones(sm.conf_raw[i].shape, bool)
+                                               if sm.dynamic_masks is None else ~sm.dynamic_masks[i]),
+        "dynamic_pcd.ply":      lambda sm, i: (np.zeros(sm.conf_raw[i].shape, bool)
+                                               if sm.dynamic_masks is None else sm.dynamic_masks[i]),
+    }
+    counts = {}
+    for name, select in sels.items():
+        pts, cols = [], []
+        for sm in nonlc:
+            if getattr(sm, "conf_raw", None) is None:
+                continue
+            thr = sm.conf_threshold * conf_coef
+            P, C = [], []
+            for i in range(sm.n):
+                m = (sm.conf_raw[i] > thr) & select(sm, i)
+                if getattr(sm, "mask", None) is not None:
+                    m = m & sm.mask[i]
+                if not m.any():
+                    continue
+                M = slam.graph.get_pose(sm.key(i)) @ np.linalg.inv(sm.poses_local[i])
+                Q = sm.points[i].reshape(-1, 3)[m.reshape(-1)]
+                P.append(Q @ M[:3, :3].T + M[:3, 3])
+                C.append(sm.colors[i].reshape(-1, 3)[m.reshape(-1)])
+            if not P:
+                continue
+            P = np.concatenate(P); C = np.concatenate(C)
+            if len(P) > budget:
+                idx = rng.choice(len(P), budget, replace=False); P, C = P[idx], C[idx]
+            pts.append(P); cols.append(C)
+        xyz = np.concatenate(pts).astype(np.float32) if pts else np.zeros((0,3), np.float32)
+        rgb = np.concatenate(cols).astype(np.uint8) if cols else np.zeros((0,3), np.uint8)
+        path = os.path.join(out_dir, name)
+        _write_ply(path, xyz, rgb)
+        counts[name] = len(xyz)
+        print(f"[fusion] {name}: {len(xyz):,} points")
+    return counts

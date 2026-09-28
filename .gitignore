@@ -25,3 +25,12 @@ align_*/
 .idea/
 .vscode/
 .DS_Store
+
+# Dynamic masking: model weights and vendored third-party code are not in git
+# (see docs/DYNAMIC_MASKING.md for where to get them)
+dynamic_masking/yolov9e-seg.pt
+dynamic_masking/thirdparty
+*.pt
+*.pth
+*.bak
+*.bak.*
