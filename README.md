@@ -4,6 +4,8 @@
 
 This repository generates coverage paths, navigation goals, and review images from a Kachaka 2D occupancy map. At a configured site it can also coordinate pose logging, 3D SLAM, Kachaka navigation, and alignment for one mapping run.
 
+**專案網頁 / Project page:** 整個系統（規劃、3D SLAM、動態物件移除、alignment）的概覽在 [`docs/index.html`](docs/index.html)，以 GitHub Pages 從 `/docs` 發布。An overview of the whole system (planning, 3D SLAM, dynamic-object removal, alignment) is in [`docs/index.html`](docs/index.html), published with GitHub Pages from `/docs`.
+
 > **安全 / Safety:** 完整流程會移動 Kachaka，部分相機調整指令也會移動機械手臂。第一次使用請先跑離線測試與 `--plan-only`，正式執行時必須有人守在急停按鈕旁。The full workflow moves the robot, and some camera-tuning commands move the arm. Run offline tests and `--plan-only` first. A trained operator must stay within reach of the emergency stop during hardware runs.
 
 ## 功能 / Features
