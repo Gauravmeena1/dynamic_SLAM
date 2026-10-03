@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kachaka 3D SLAM</title>
+<meta name="description" content="Automatic 3D mapping with a Kachaka robot: coverage planning, RGB-D SLAM with live removal of people and moving objects, 2D/3D alignment, and a navigation bundle for the robotic agent.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='white' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='1.8' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #fbfbfa; --surface: #ffffff; --surface-2: #f3f4f6; --text: #16181d; --muted: #5b6270;
+  --border: #e3e5e9; --accent: #2563eb; --accent-soft: #e8efff; --red: #dc2626; --amber: #d97706;
+  --blue: #2563eb; --green: #15803d; --warn-bg: #fff7e6; --warn-border: #f5c56b;
+  --code-bg: #f4f5f7; --shadow: 0 1px 2px rgba(16,24,40,.05), 0 4px 16px rgba(16,24,40,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --surface: #171a20; --surface-2: #1e222a; --text: #e8eaee; --muted: #9aa2b1;
+    --border: #2a2f39; --accent: #6b9bff; --accent-soft: #1a2541; --red: #f87171; --amber: #fbbf24;
+    --blue: #6b9bff; --green: #4ade80; --warn-bg: #2a2111; --warn-border: #7a5a1c; --code-bg: #1c2027;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --surface: #171a20; --surface-2: #1e222a; --text: #e8eaee; --muted: #9aa2b1;
+  --border: #2a2f39; --accent: #6b9bff; --accent-soft: #1a2541; --red: #f87171; --amber: #fbbf24;
+  --blue: #6b9bff; --green: #4ade80; --warn-bg: #2a2111; --warn-border: #7a5a1c; --code-bg: #1c2027;
+  --shadow: none;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.65 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img { max-width: 100%; height: auto; display: block; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em; }
+:not(pre) > code { background: var(--code-bg); border: 1px solid var(--border); padding: .08em .35em; border-radius: 5px; overflow-wrap: anywhere; }
+
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 720px) { .wrap { padding: 0 28px; } }
+
+/* nav */
+.nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.nav .wrap { display: flex; align-items: center; gap: 20px; height: 56px; }
+.brand { font-weight: 700; color: var(--text); white-space: nowrap; }
+.nav ul { display: flex; gap: 18px; list-style: none; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; flex: 1; }
+.nav ul::-webkit-scrollbar { display: none; }
+.nav ul a { color: var(--muted); font-size: 14px; white-space: nowrap; }
+.nav ul a:hover { color: var(--text); text-decoration: none; }
+.theme-btn { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 8px; width: 34px; height: 34px; cursor: pointer; flex: none; }
+@media (max-width: 640px) { .nav ul { display: none; } .nav .wrap { justify-content: space-between; } }
+
+/* hero */
+.hero { padding: 64px 0 40px; text-align: center; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 4px 12px; border-radius: 99px; margin-bottom: 18px; }
+h1 { font-size: clamp(30px, 5.2vw, 48px); line-height: 1.12; letter-spacing: -.02em; margin: 0 auto 10px; max-width: 820px; }
+.zh { color: var(--muted); font-size: 17px; margin: 0 0 18px; }
+.lede { max-width: 720px; margin: 0 auto 28px; color: var(--muted); font-size: 18px; }
+.btns { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-weight: 600; font-size: 15px; box-shadow: var(--shadow); }
+.btn:hover { text-decoration: none; border-color: var(--accent); }
+.btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+.btn svg { width: 18px; height: 18px; }
+.hero-fig { margin-top: 40px; }
+
+/* sections */
+section { padding: 48px 0; border-top: 1px solid var(--border); }
+h2 { font-size: clamp(24px, 3.4vw, 30px); letter-spacing: -.015em; margin: 0 0 8px; }
+h3 { font-size: 18px; margin: 28px 0 8px; }
+.sub { color: var(--muted); margin: 0 0 24px; max-width: 760px; }
+
+/* stats */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 18px 16px; box-shadow: var(--shadow); }
+.stat .v { font-size: 28px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 16px; font-weight: 600; color: var(--muted); }
+.stat .l { font-size: 14px; color: var(--muted); line-height: 1.45; margin-top: 4px; }
+
+/* pipeline */
+.pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; position: relative; }
+@media (max-width: 860px) { .pipe { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .pipe { grid-template-columns: 1fr; } }
+.lane { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); position: relative; }
+.lane .n { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+.lane h4 { margin: 2px 0 10px; font-size: 17px; }
+.lane ol { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 6px; }
+.lane li { background: var(--surface-2); border-radius: 8px; padding: 7px 10px; font-size: 14px; line-height: 1.4; }
+.lane li b { font-weight: 600; }
+.lane li span { display: block; color: var(--muted); font-size: 12.5px; }
+.lane .out { margin-top: 10px; font-size: 13px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px; }
+.lane .out code { font-size: 12px; }
+@media (min-width: 861px) {
+  .lane:not(:last-child)::after { content: ""; position: absolute; right: -12px; top: 50%; width: 10px; height: 10px; border-top: 2px solid var(--muted); border-right: 2px solid var(--muted); transform: translateY(-50%) rotate(45deg); opacity: .6; }
+}
+
+/* stage table */
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 14.5px; }
+td code { white-space: nowrap; overflow-wrap: normal; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--surface-2); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.tag.ok { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+.tag.wip { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); }
+
+/* method */
+.channels { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 8px; }
+.ch { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--c); border-radius: 12px; padding: 16px; }
+.ch h4 { margin: 0 0 6px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.ch h4 i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); display: inline-block; }
+.ch p { margin: 0; font-size: 14.5px; color: var(--muted); }
+.ch p + p { margin-top: 6px; }
+.rule { background: var(--accent-soft); border-radius: 12px; padding: 14px 18px; margin: 18px 0 8px; font-size: 15px; }
+
+/* figures */
+figure { margin: 22px 0 0; }
+figure img { border-radius: 12px; border: 1px solid var(--border); width: 100%; background: #fff; }
+figcaption { font-size: 14px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+figcaption b { color: var(--text); font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: 1px; margin-right: 2px; }
+
+/* code */
+.code { position: relative; margin: 10px 0 0; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; overflow-x: auto; line-height: 1.55; margin: 0; }
+pre .c { color: var(--muted); }
+.copy { position: absolute; top: 8px; right: 8px; font: 600 12px Inter, sans-serif; border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 7px; padding: 4px 9px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+.code:hover .copy, .copy:focus { opacity: 1; }
+@media (hover: none) { .copy { opacity: 1; } }
+
+.callout { display: flex; gap: 12px; background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 12px; padding: 14px 16px; font-size: 15px; margin: 20px 0 0; }
+.callout b { white-space: nowrap; }
+
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.tab { border: 1px solid var(--border); background: var(--surface); color: var(--muted); font: 600 14px Inter, sans-serif; padding: 7px 14px; border-radius: 9px; cursor: pointer; }
+.tab[aria-selected="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.panel[hidden] { display: none; }
+.panel > p { margin: 14px 0 0; font-size: 15px; color: var(--muted); }
+
+.docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.doc { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; color: var(--text); }
+.doc:hover { border-color: var(--accent); text-decoration: none; }
+.doc b { display: block; font-size: 15px; }
+.doc span { font-size: 13.5px; color: var(--muted); }
+
+ul.plain { padding-left: 20px; margin: 8px 0 0; }
+ul.plain li { margin: 6px 0; }
+footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top">Kachaka 3D SLAM</a>
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#pipeline">Pipeline</a></li>
+      <li><a href="#masking">Dynamic masking</a></li>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#start">Getting started</a></li>
+      <li><a href="#repo">Repository</a></li>
+      <li><a href="#docs">Docs</a></li>
+    </ul>
+    <button class="theme-btn" id="themeBtn" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <span class="eyebrow">Kachaka robot · RGB-D SLAM · dynamic-object removal</span>
+    <h1>Automatic 3D mapping with people removed from the map</h1>
+    <p class="zh">Kachaka 自動建圖 · 3D SLAM · 即時動態物件移除</p>
+    <p class="lede">The Kachaka robot drives a planned coverage route while an RGB-D camera records. A 3D SLAM server builds the map and, at the same time, removes people and moving objects so they never become map points. The 3D map is then aligned to the robot's 2D map and packaged for the robotic agent's navigation.</p>
+    <div class="btns">
+      <a class="btn primary" href="https://github.com/h44343880/kachaka_mapping/tree/gaurav/dynamic-masking">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Code
+      </a>
+      <a class="btn" href="#start">Getting started</a>
+      <a class="btn" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md">Masking guide</a>
+      <a class="btn" href="#results">Results</a>
+    </div>
+    <figure class="hero-fig">
+      <img src="assets/live_removal.jpg" alt="Four pairs of camera frames: raw frame on the left, the same frame with the person and a carried bottle covered by a red removal mask on the right" width="1600" height="608">
+      <figcaption>Live removal during mapping. Each pair shows the raw RGB frame and the pixels the masker removed (<span class="dot" style="background:var(--red)"></span>red = person/semantic channel). Walking people, close-ups, motion blur and a carried bottle are all removed before the frame reaches the map.</figcaption>
+    </figure>
+  </div>
+</header>
+
+<main>
+
+<section id="overview">
+  <div class="wrap">
+    <h2>At a glance</h2>
+    <p class="sub">Measured on lab recordings and live robot runs from September to October 2026. Details and conditions are in <a href="#results">Results</a>.</p>
+    <div class="stats">
+      <div class="stat"><div class="v">0.077 <small>m</small></div><div class="l">2D/3D alignment RMSE on the map803 run (pass threshold 0.30 m)</div></div>
+      <div class="stat"><div class="v">59 → 1</div><div class="l">person-free frames with &gt;1 % wrongly removed (of 296) after the geo gate</div></div>
+      <div class="stat"><div class="v">−90 %</div><div class="l">person points left in the 3D map (36,244 → 3,546) after 3D carving</div></div>
+      <div class="stat"><div class="v">57 / 68</div><div class="l">semantic objects that get a reachable navigation goal for the robotic agent</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="pipeline">
+  <div class="wrap">
+    <h2>How the whole system works</h2>
+    <p class="sub">One command, <code>run_bridge_oneshot.sh</code>, runs the whole mapping session. It stops twice to ask the operator before anything moves.</p>
+
+    <div class="pipe">
+      <div class="lane">
+        <div class="n">1 · Plan</div>
+        <h4>Coverage route</h4>
+        <ol>
+          <li><b>2D map from the Kachaka App</b><span>exported as PNG + YAML, map ID checked</span></li>
+          <li><b>Coverage path</b><span>boustrophedon or spiral, robot-radius and wall-clearance checks</span></li>
+          <li><b>Goals + preview</b><span>thinned waypoints, yaw limits, ordered preview image</span></li>
+        </ol>
+        <div class="out">→ <code>goals_RUN.csv</code>, preview PNG</div>
+      </div>
+      <div class="lane">
+        <div class="n">2 · Drive &amp; record</div>
+        <h4>Robot + camera</h4>
+        <ol>
+          <li><b>Kachaka <code>move_to_pose</code></b><span>goal by goal, onboard obstacle avoidance, 60 s timeout per goal</span></li>
+          <li><b>Pose2D logger</b><span>robot pose in the 2D map frame</span></li>
+          <li><b>RealSense D435 → ROS 2 gateway</b><span>RGB + depth + intrinsics streamed to the SLAM server</span></li>
+        </ol>
+        <div class="out">→ <code>pose2d_RUN.csv</code>, RGB-D stream</div>
+      </div>
+      <div class="lane">
+        <div class="n">3 · Build</div>
+        <h4>3D SLAM + masking</h4>
+        <ol>
+          <li><b>SLAM server</b><span>submaps of 16 frames, loop closure, live 3D view</span></li>
+          <li><b>Dynamic masking</b><span>per chunk, between depth inference and point creation</span></li>
+          <li><b>3D carving</b><span>removes points that other views see on a person</span></li>
+        </ol>
+        <div class="out">→ <code>static_only_pcd.ply</code>, <code>mask_viz/</code></div>
+      </div>
+      <div class="lane">
+        <div class="n">4 · Align &amp; export</div>
+        <h4>Map for navigation</h4>
+        <ol>
+          <li><b>Sim(2) alignment</b><span>SLAM trajectory ↔ Pose2D log, camera lever arm corrected</span></li>
+          <li><b>Semantic instances</b><span>objects with positions in the robot's map frame</span></li>
+          <li><b>Navigation bundle</b><span>occupancy + objects for the robotic agent</span></li>
+        </ol>
+        <div class="out">→ alignment report, nav bundle</div>
+      </div>
+    </div>
+
+    <h3>The seven stages of a run</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Stage</th><th>What happens</th><th>Operator</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1 / 7</td><td>Preflight (containers, camera, arm, disk, stale processes) and show the active Kachaka map</td><td>Confirm the map</td></tr>
+          <tr><td class="num">2 / 7</td><td>Export the 2D map to <code>artifacts/runs/kachaka_2d_VENUE.{png,yaml}</code></td><td></td></tr>
+          <tr><td class="num">3 / 7</td><td>Plan the coverage path, thin it to goals, render the preview</td><td>Check the preview</td></tr>
+          <tr><td class="num">4 / 7</td><td>Start the Pose2D logger</td><td></td></tr>
+          <tr><td class="num">5 / 7</td><td>Start 3D SLAM with masking (1–3 min to load models)</td><td></td></tr>
+          <tr><td class="num">6 / 7</td><td>Drive the goals one by one; a goal over the timeout is cancelled and skipped</td><td>Stand at the e-stop</td></tr>
+          <tr><td class="num">6.5</td><td>Recording finishes; the map is saved</td><td>Never kill the server</td></tr>
+          <tr><td class="num">7 / 7</td><td>Print (or run with <code>--align</code>) the alignment commands</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid2">
+      <figure>
+        <img src="assets/coverage_plan.jpg" alt="Occupancy map with a planned serpentine route of 17 waypoints from a blue start dot to a red end dot" width="900" height="763" loading="lazy">
+        <figcaption><b>Stage 3 preview.</b> 17 goals, 10.2 m, blue = start, red = end, arrows show direction. The operator checks this before the robot moves.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/alignment_overlay.jpg" alt="2D map with the robot's logged path in green and the aligned SLAM camera path in blue, plus labelled semantic objects" width="783" height="455" loading="lazy">
+        <figcaption><b>Stage 7 alignment.</b> <span class="dot" style="background:var(--green)"></span>Robot path from the Pose2D log and <span class="dot" style="background:var(--blue)"></span>SLAM camera path after Sim(2) alignment, with semantic objects placed in the robot's map. The visible gap is the camera's 0.146 m lever arm; with it corrected the RMSE is 0.077 m.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="masking">
+  <div class="wrap">
+    <h2>Dynamic-object masking</h2>
+    <p class="sub">People are always removed. Other movable objects (laptop, bag, bottle…) are removed only while they move or are carried, so a laptop left on a desk stays in the map. Masked pixels never become 3D points.</p>
+
+    <div class="channels">
+      <div class="ch" style="--c: var(--red)">
+        <h4><i></i>Semantic: YOLOv9e-seg</h4>
+        <p>Instance masks per frame. Person confidence ≥ 0.15 (others ≥ 0.25), set low on purpose for blurry robot footage.</p>
+        <p>A person is always removed. Another movable object is removed only if it is <b>moving</b> (≥ 30 % of its pixels have a high flow residual) or <b>carried</b> (touches a person).</p>
+      </div>
+      <div class="ch" style="--c: var(--amber)">
+        <h4><i></i>Motion: FlowSeek optical flow</h4>
+        <p>Measured flow is compared with the flow that the camera's own motion predicts. Pixels whose residual exceeds an adaptive threshold (median + 3·MAD), checked against both neighbouring frames, are moving.</p>
+        <p><b>Geo gate:</b> a motion blob is kept only if it touches a movable-class detection (30 px).</p>
+      </div>
+      <div class="ch" style="--c: var(--blue)">
+        <h4><i></i>Bridge</h4>
+        <p>Fills a single-frame detector miss between two detections of the same object, so one blurry frame does not leave a "ghost" in the map.</p>
+      </div>
+    </div>
+
+    <div class="rule"><b>Oct 1 update: 3D carving and edge cleanup.</b> A 2D mask cannot stop points that <em>other</em> frames' depth predictions place on a person. Every map point is now projected into every frame; a point seen on a removed pixel and never confirmed by another view is carved out. The person box is also extended downwards (legs behind furniture), and a 12 px ring of depth-jump "flying" pixels around each mask is dropped.</div>
+
+    <div class="grid2">
+      <figure>
+        <img src="assets/false_positive_fix.jpg" alt="Two frames without people. Left: yellow motion-only masks on a door and shelf tops. Right: the same frames with nothing removed." width="1286" height="966" loading="lazy">
+        <figcaption><b>Geo gate removes false positives.</b> Left: before, the flow channel fired on a door edge and shelf tops while the camera turned (<span class="dot" style="background:var(--amber)"></span>yellow = motion only). Right: after, nothing is removed. Person-free frames with &gt;1 % removed fell from 59/296 to 1/296; the people removal was unchanged.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/carving_before_after.jpg" alt="Point-cloud renders: before, magenta person points visible; after, almost none" width="768" height="576" loading="lazy">
+        <figcaption><b>3D carving removes leftover person points.</b> Renders of the 3D map from two camera poses; <span class="dot" style="background:#e000e0"></span>magenta = points that lie on a person, blue = person outline. Across the run, person points fell from 36,244 to 3,546. Much of the remainder is box edges under a hand (contact lines).</figcaption>
+      </figure>
+    </div>
+    <figure>
+      <img src="assets/bev_before_after.jpg" alt="Top-down views of a lab 3D map before and after removal; the after view lacks the scattered person-shaped blobs in the middle of the room" width="1294" height="567" loading="lazy">
+      <figcaption><b>Live run with people walking through</b> (map <code>lab_20260925</code>, run <code>move1</code>). Top-down view of the 3D map before (left) and after (right) removal. The person-shaped smears in the open floor area disappear; walls and furniture are kept.</figcaption>
+    </figure>
+
+    <h3>Watching it live</h3>
+    <p class="sub" style="margin-bottom:0">While the robot maps, a web view shows the 3D map with removed points in red next to the camera panel, colour-coded by channel (<span class="dot" style="background:var(--red)"></span>semantic, <span class="dot" style="background:var(--amber)"></span>motion only, <span class="dot" style="background:var(--blue)"></span>bridge). Every frame is also saved to <code>mask_viz/</code> with a per-frame <code>removed.csv</code>.</p>
+  </div>
+</section>
+
+<section id="results">
+  <div class="wrap">
+    <h2>Results</h2>
+    <p class="sub">All runs are in our lab with the Kachaka robot. "Offline" means a recording replayed through exactly the same server code path as a live run.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Run</th><th>Type</th><th>What was measured</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td><code>mapping_20260922_01</code></td><td>Offline, 389 frames</td><td>Mean pixels removed per frame / motion-only share</td><td class="num">2.2 % / 0.1 %</td></tr>
+          <tr><td><code>mapping_20260922_01</code></td><td>Offline</td><td>Person-free frames with &gt;1 % removed, before → after geo gate</td><td class="num">59 → 1 of 296</td></tr>
+          <tr><td><code>map803_0930_run5</code></td><td>Live + semantic</td><td>Person points left in the 3D map (v1 → v2 → v3 → v4)</td><td class="num">36,244 → 3,546</td></tr>
+          <tr><td><code>map803_0930_run5</code></td><td>Live + semantic</td><td>Alignment RMSE (lever arm corrected), max error</td><td class="num">0.077 m, 0.151 m</td></tr>
+          <tr><td><code>map803_0930_run5</code></td><td>Nav bundle</td><td>Objects with a goal / in mapped space</td><td class="num">57 / 68, 25</td></tr>
+          <tr><td><code>onsite_remap_run3</code></td><td>Live, 407 frames</td><td>Alignment RMSE (reference baseline)</td><td class="num">0.104 m <span class="tag ok">pass</span></td></tr>
+          <tr><td><code>ec129_0911_bridge</code></td><td>Live, 910 frames</td><td>Alignment RMSE</td><td class="num">0.108 m <span class="tag ok">pass</span></td></tr>
+          <tr><td><code>lab_20260925</code> run3, move1</td><td>Live, people walking</td><td>Walking, sitting and carrying people removed</td><td><span class="tag ok">qualitative</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Detector comparison: YOLOv9e-seg vs SAM 3.1</h3>
+    <p class="sub" style="margin-bottom:12px">Same recording, 413 chunk-frames. SAM 3.1 runs only offline (≈0.7 s/frame on our Jetson), so YOLO stays the live detector.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Detector</th><th>Frames with a person</th><th>Final mask area</th><th>Removed on frames neither detector sees</th></tr></thead>
+        <tbody>
+          <tr><td>YOLOv9e-seg + geo gate <span class="tag ok">live</span></td><td class="num">116</td><td class="num">2.37 %</td><td class="num">0.002 %</td></tr>
+          <tr><td>SAM 3.1 + geo gate</td><td class="num">117</td><td class="num">2.09 %</td><td class="num">0.008 %</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:10px">The two detectors agree on 105 frames; their union covers 128 (+10 % recall), which is a candidate for offline map building.</p>
+
+    <figure>
+      <img src="assets/map3d_views.jpg" alt="Two views of a coloured 3D point-cloud map of a lab room with the ceiling removed" width="1800" height="633" loading="lazy">
+      <figcaption><b>A finished 3D map</b> of a lab room (ceiling removed), bird's-eye and oblique views.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2>Getting started</h2>
+    <p class="sub">Planning runs on any computer with Python 3.10+. The live pipeline needs the lab machine (Docker, GPU, the SLAM and gateway images, model weights, the Kachaka SDK).</p>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-p="p1">1 · Offline planning</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p2">2 · Lab machine setup</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p3">3 · Test masking offline</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p4">4 · Live mapping run</button>
+    </div>
+
+    <div class="panel" id="p1">
+<div class="code"><pre>git clone https://github.com/h44343880/kachaka_mapping.git
+cd kachaka_mapping
+git switch gaurav/dynamic-masking
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt
+python -m unittest discover -s . -p 'test_*.py' -v
+
+<span class="c"># plan a route on any occupancy map (no robot, nothing moves)</span>
+python make_bridge_traj.py --map-yaml map.yaml --start 0,0,0 \
+  --pattern boustrophedon --spacing 0.6 --min-clearance 0.40 \
+  --out artifacts/runs/traj_demo.csv
+python drive_waypoints.py artifacts/runs/traj_demo.csv \
+  --map-yaml map.yaml --save-goals artifacts/runs/goals_demo.csv
+python preview_traj.py --map-yaml map.yaml --traj artifacts/runs/goals_demo.csv</pre></div>
+      <p>Without <code>--go</code>, <code>drive_waypoints.py</code> only prints the plan.</p>
+    </div>
+
+    <div class="panel" id="p2" hidden>
+<div class="code"><pre>cp .env.example .env &amp;&amp; nano .env        <span class="c"># robot address, camera serial, paths, container names</span>
+<span class="c"># model weights are not in git: yolov9e-seg.pt and thirdparty/ (FlowSeek)</span>
+cp &lt;method-folder&gt;/yolov9e-seg.pt dynamic_masking/
+cp -r &lt;method-folder&gt;/thirdparty dynamic_masking/
+set -a; . ./.env; set +a
+slam_integration/install.sh /path/to/ma-long-server "$KACHAKA_TOOLS_DIR"
+slam_tools/make_containers.sh             <span class="c"># only creates missing containers</span>
+
+<span class="c"># after every reboot</span>
+docker start "$KACHAKA_AI_CONTAINER" "$KACHAKA_SLAM_CONTAINER"
+$KACHAKA_PYTHON slam_tools/kachaka_ctl.py status
+slam_tools/cam_check.sh                   <span class="c"># camera must report USB 3.x</span>
+./preflight.sh --name RUN</pre></div>
+      <p>Every <code>.env</code> key is described in the <a href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md">masking guide</a>. Ask Gaurav for the weights folder on the lab machine.</p>
+    </div>
+
+    <div class="panel" id="p3" hidden>
+<div class="code"><pre><span class="c"># window 1: SLAM server with masking (wait for "models resident")</span>
+tmux new -s t1
+slam_tools/run_t1_server.sh --mode rgb+depth+intr --backend ma
+
+<span class="c"># window 2: replay a recording through the same code path as live</span>
+python3 slam_tools/replay_ab.py mapping_20260922_01 offline_test1
+
+<span class="c"># top-down before | after | removed</span>
+docker exec "$KACHAKA_AI_CONTAINER" python \
+  "$KACHAKA_CODE_DIR_CT/kachaka_mapping/slam_tools/bev_compare.py" /fungi/outputs_malong/offline_test1</pre></div>
+      <p>Expected on <code>mapping_20260922_01</code>: about 2.2 % of pixels removed per frame, about 0.1 % from motion alone.</p>
+    </div>
+
+    <div class="panel" id="p4" hidden>
+<div class="code"><pre><span class="c"># 1. plan only, then open artifacts/previews/preview_goals_RUN.png</span>
+./run_bridge_oneshot.sh --name RUN --venue VENUE --goal-timeout 60 --plan-only
+
+<span class="c"># 2. full run in tmux: answer y twice (map correct? / route OK, robot moves?)</span>
+tmux new -s mapping
+./run_bridge_oneshot.sh --name RUN --venue VENUE --reuse-map --goal-timeout 60
+
+<span class="c"># 3. watch live</span>
+python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask --port 8092</pre></div>
+      <p>Use a new <code>--name</code> every run and a new <code>--venue</code> whenever the App map changes. Start about 1 m off the dock; planning from the dock fails.</p>
+    </div>
+
+    <div class="callout"><b>⚠ Safety</b><span>A full run moves the robot. Always run <code>--plan-only</code> first, check the preview, keep the path clear, and keep a trained person within reach of the emergency stop. Don't use <code>-y</code> on a first run. Never kill the SLAM server while it records or saves, because the map in memory is lost.</span></div>
+  </div>
+</section>
+
+<section id="repo">
+  <div class="wrap">
+    <h2>Repository layout</h2>
+    <p class="sub">Machine-specific values (robot address, camera serial, paths) live only in a local <code>.env</code> and are never committed.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>run_bridge_oneshot.sh</code></td><td>The seven-stage field workflow, with confirmation before motion</td></tr>
+          <tr><td><code>make_bridge_traj.py</code>, <code>drive_waypoints.py</code>, <code>preview_traj.py</code></td><td>Coverage planning, goal thinning and validation, previews</td></tr>
+          <tr><td><code>preflight.sh</code>, <code>arm_cam_tune.sh</code></td><td>Read-only site checks; camera view and arm stow-pose tuning</td></tr>
+          <tr><td><code>dynamic_masking/</code></td><td>The masking method: <code>chunk_fusion_masker.py</code> (fusion, object policy, geo gate), <code>dynamic_object_mask.py</code> (YOLO), <code>dynamic_fusion.py</code> + <code>flowseek_flow.py</code> (motion), <code>motion_compensation.py</code></td></tr>
+          <tr><td><code>slam_integration/</code></td><td><code>fusion_solver.py</code> hooks the masker into the SLAM server, adds the live view and 3D carving; small patches for the server and camera gateway; idempotent <code>install.sh</code></td></tr>
+          <tr><td><code>slam_tools/</code></td><td>Server and gateway launchers, live view, replay, robot control (<code>kachaka_ctl.py</code>), camera check, cleanup, bird's-eye comparison</td></tr>
+          <tr><td><code>docs/</code></td><td>Guides, validation reports and this page</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Hardware and software</h3>
+    <ul class="plain">
+      <li><b>Robot:</b> Kachaka mobile base (driven through the Kachaka API, <code>move_to_pose</code>), with a robot arm that holds the camera in a fixed stow pose during mapping.</li>
+      <li><b>Camera:</b> Intel RealSense D435 RGB-D on USB 3.</li>
+      <li><b>Compute:</b> NVIDIA Jetson (aarch64) running two Docker containers: a camera-to-ROS 2 gateway and a GPU container with the SLAM server and the masker.</li>
+      <li><b>Models:</b> YOLOv9e-seg (semantic), FlowSeek (optical flow), the lab's ma-long SLAM backend; SAM 3.1 for offline evaluation.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="wrap">
+    <h2>Documentation</h2>
+    <p class="sub">Everything below is on the <code>gaurav/dynamic-masking</code> branch.</p>
+    <div class="docs">
+      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/README.md"><b>README</b><span>Planning toolkit, CLI, safety gates (中文 / English)</span></a>
+      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md"><b>Dynamic masking guide</b><span>Setup, offline test, live run, outputs, troubleshooting</span></a>
+      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/KNOWN_ISSUES.md"><b>Known issues</b><span>Field problems, causes and workarounds</span></a>
+      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/FIELD_NOTES_2026.md"><b>Field notes 2026</b><span>Lessons from on-site runs</span></a>
+      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/ALIGNMENT_VALIDATION_20260921.md"><b>Alignment validation</b><span>2D/3D alignment method and pass criteria</span></a>
+      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/ROBOTIC_AGENT_BUNDLE_VALIDATION_20260922.md"><b>Robotic-agent bundle</b><span>Navigation bundle export and checks</span></a>
+      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/CONTRIBUTING.md"><b>Contributing</b><span>Offline checks, safety rules, PR checklist</span></a>
+    </div>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <h2>Limitations and next steps</h2>
+    <div class="grid2" style="margin-top:8px">
+      <div>
+        <h3 style="margin-top:0">Known limitations</h3>
+        <ul class="plain">
+          <li>With the geo gate on, an object the detector cannot label is no longer removed by motion alone (<code>DYNAMIC_GEO_GATE=none</code> restores it).</li>
+          <li>When a person leans on a stool or box, the per-frame mask also covers the object; it survives only through other views.</li>
+          <li>A still object next to a still person (e.g. a suitcase) can be treated as carried and removed.</li>
+          <li>Tinted glass lets depth see through it, which gives blotchy areas; this isn't a masking error.</li>
+          <li>A 0.40 m wall clearance removes much of the free space, so always check the preview.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="margin-top:0">Being evaluated</h3>
+        <ul class="plain">
+          <li>YOLO ∪ SAM 3.1 ensemble for offline maps (+10 % recall).</li>
+          <li>A few-pixel person-mask dilation for edge residue.</li>
+          <li>A stricter "carried" rule: carried only if moving, or mostly inside the person mask.</li>
+          <li>Motion compensation with a fixed threshold in compensated space (the adaptive threshold cancelled the gain).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav; mapping toolkit in <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated October 2026.
+  </div>
+</footer>
+
+<script>
+(function () {
+  var root = document.documentElement, btn = document.getElementById('themeBtn');
+  try { var t = localStorage.getItem('theme'); if (t) root.setAttribute('data-theme', t); } catch (e) {}
+  btn.addEventListener('click', function () {
+    var cur = root.getAttribute('data-theme') ||
+      (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (e) {}
+  });
+
+  document.querySelectorAll('.tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (t) {
+        t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+        document.getElementById(t.dataset.p).hidden = t !== tab;
+      });
+    });
+  });
+
+  document.querySelectorAll('.code').forEach(function (box) {
+    var b = document.createElement('button');
+    b.className = 'copy'; b.type = 'button'; b.textContent = 'Copy';
+    b.addEventListener('click', function () {
+      var text = box.querySelector('pre').innerText;
+      navigator.clipboard.writeText(text).then(function () {
+        b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1400);
+      });
+    });
+    box.appendChild(b);
+  });
+})();
+</script>
+</body>
+</html>
