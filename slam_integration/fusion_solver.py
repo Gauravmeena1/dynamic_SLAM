@@ -136,6 +136,18 @@ def build_masker(device: str = "cuda", **kw):
         # Unanchored blobs on the 0922 capture were static depth edges seen while the camera turned.
         # Set DYNAMIC_GEO_GATE=none (container env) to get the previous behaviour back.
         geo_gate=os.environ.get("DYNAMIC_GEO_GATE", "anchor"), geo_anchor_px=30,
+        # 2026-10-01, against person pixels left in the map (map803 run5 vs SAM 3 reference:
+        # 1.96 % -> 0.79 % of person pixels left): grow person masks (edge / flying pixels), fill the
+        # person's detection box at the person's depth (parts hidden behind an occluder), and bridge
+        # up to 3 frames without a detection (motion blur; entering/leaving through the image border).
+        # Box fill also extends 0.6 x box height downwards (legs under furniture) and depth-edge
+        # pixels within 12 px of the mask are removed (flying-pixel line). Set the env vars to
+        # 0 / 0 / 1 / 0 / 0 for the behaviour before 2026-10-01.
+        person_dilate_px=int(os.environ.get("DYNAMIC_PERSON_DILATE_PX", "5")),
+        person_box_fill=os.environ.get("DYNAMIC_PERSON_BOX_FILL", "1") == "1",
+        bridge_max_gap=int(os.environ.get("DYNAMIC_BRIDGE_MAX_GAP", "3")),
+        box_fill_down=float(os.environ.get("DYNAMIC_BOX_FILL_DOWN", "0.6")),
+        edge_ring_px=int(os.environ.get("DYNAMIC_EDGE_RING_PX", "12")),
     )
     params.update(kw)
     return ChunkFusionMasker(**params)
@@ -147,6 +159,20 @@ class FusionMaSlam(MaSlam):
     def __init__(self, *args, masker=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._masker = masker
+        # multi-view carving of the written map (see carve_dynamic_ply): wrap this session's
+        # GraphMap.write_points so every writer (offline run(), stream _finalize) gets it, before
+        # deploy reads combined_pcd.ply.
+        if masker is not None and os.environ.get("DYNAMIC_CARVE", "1") == "1":
+            _orig_write = self.map.write_points
+
+            def _write_and_carve(graph, path, *a, **kw):
+                r = _orig_write(graph, path, *a, **kw)
+                try:
+                    carve_dynamic_ply(self, graph, path)
+                except Exception as exc:                   # never lose the map over this
+                    print(f"[fusion] WARNING: carving skipped: {type(exc).__name__}: {exc}")
+                return r
+            self.map.write_points = _write_and_carve
         self.stats.setdefault("n_masked_submaps", 0)
         self.stats.setdefault("masked_frac_sum", 0.0)
 
@@ -215,6 +241,17 @@ class FusionMaSlam(MaSlam):
 
         # ---- remainder copied verbatim from MaSlam.process_submap (330-345) ----
         prev = self.map.latest(ignore_lc=True)
+        # The overlap frame is shared: the previous submap's last frame IS this chunk's frame 0, and its
+        # points are kept in both submaps. The previous chunk decided that frame's mask without seeing
+        # later frames (e.g. a person detected only from the next frame on), so apply this chunk's
+        # frame-0 mask to the previous submap's copy too. Export reads sm.conf at write time, so zeroing
+        # it here removes those points from the map. (2026-10-01)
+        if (dyn_keep is not None and prev is not None and getattr(prev, "image_paths", None)
+                and sm.image_paths and prev.image_paths[-1] == sm.image_paths[0]
+                and getattr(prev, "conf", None) is not None and prev.conf[-1].shape == dyn_keep[0].shape):
+            prev.conf[-1] = np.where(dyn_keep[0], 0.0, prev.conf[-1])
+            if getattr(prev, "dynamic_masks", None) is not None:
+                prev.dynamic_masks[-1] = prev.dynamic_masks[-1] | dyn_keep[0]
         if prev is None:
             self._add_first_submap(sm)
         else:
@@ -348,6 +385,85 @@ def _write_ply(path, xyz, rgb):
     v["red"],v["green"],v["blue"] = rgb[:,0],rgb[:,1],rgb[:,2]
     with open(path,"wb") as fh:
         fh.write(hdr); fh.write(v.tobytes())
+
+
+def _read_ply_xyzrgb(path):
+    with open(path, "rb") as fh:
+        n = 0
+        while True:
+            line = fh.readline().decode().strip()
+            if line.startswith("element vertex"):
+                n = int(line.split()[-1])
+            if line == "end_header":
+                break
+        dt = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")])
+        v = np.frombuffer(fh.read(n * dt.itemsize), dtype=dt, count=n)
+    return np.stack([v["x"], v["y"], v["z"]], 1), np.stack([v["red"], v["green"], v["blue"]], 1)
+
+
+def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None):
+    """Multi-view check of the written map (2026-10-01).
+
+    The per-pixel mask only keeps a frame's OWN dynamic pixels out of the map. A few points still
+    land on a person: depth predicted for an unmasked pixel of another frame (blur, mixed edge
+    depth) can place a point exactly where a person stands. Each map point is therefore projected
+    into every frame; where that frame's depth agrees with the point (|z - Z_f| < 3 cm + 2 % z) the
+    frame "sees" it, either on a removed (dynamic) pixel or on a kept one. A point that is seen on a
+    dynamic pixel at least `min_dyn` times and on a kept pixel at most `max_static` times (its own
+    source frame is one kept observation) was never confirmed as static and is removed. Static
+    surfaces a person touches (stool, box) are seen unmasked from other frames and stay.
+    Removed points go to carved_pcd.ply next to the map.
+    """
+    min_dyn = int(os.environ.get("DYNAMIC_CARVE_MIN_DYN", "1")) if min_dyn is None else min_dyn
+    max_static = int(os.environ.get("DYNAMIC_CARVE_MAX_STATIC", "1")) if max_static is None else max_static
+    frames = {}                                    # image path -> [c2w, K, Z, dyn]; shared frames merged
+    for sm in slam.map.ordered():
+        if sm.is_lc or getattr(sm, "dynamic_masks", None) is None:
+            continue
+        for i in range(sm.n):
+            key = sm.image_paths[i] if sm.image_paths else (sm.base_id, i)
+            dyn = np.asarray(sm.dynamic_masks[i], bool)
+            if key in frames:
+                frames[key][3] = frames[key][3] | dyn
+                continue
+            if sm.depth is not None:
+                Z = np.asarray(sm.depth[i], np.float32)
+            else:                                  # camera-frame Z from the local points
+                L = np.linalg.inv(sm.poses_local[i])
+                Z = (sm.points[i].reshape(-1, 3) @ L[:3, :3].T + L[:3, 3])[:, 2].reshape(dyn.shape).astype(np.float32)
+            if getattr(sm, "mask", None) is not None:
+                Z = np.where(sm.mask[i], Z, 0)
+            if Z.shape != dyn.shape:
+                continue
+            frames[key] = [graph.get_pose(sm.key(i)), [float(x) for x in np.asarray(sm.intrinsics[i]).reshape(-1)[[0, 2, 4, 5]]], Z, dyn]
+    if not frames or not any(f[3].any() for f in frames.values()):
+        return 0
+    xyz, rgb = _read_ply_xyzrgb(path)
+    dev = "cuda" if (torch is not None and torch.cuda.is_available()) else "cpu"
+    P = torch.from_numpy(xyz.astype(np.float32)).to(dev)
+    n_dyn = torch.zeros(len(P), dtype=torch.int32, device=dev); n_sta = torch.zeros_like(n_dyn)
+    for c2w, K, Z, dyn in frames.values():
+        H, W = Z.shape
+        R = torch.from_numpy(c2w[:3, :3].astype(np.float32)).to(dev); t = torch.from_numpy(c2w[:3, 3].astype(np.float32)).to(dev)
+        Zt = torch.from_numpy(Z).to(dev); Dt = torch.from_numpy(dyn).to(dev)
+        for a in range(0, len(P), 4_000_000):
+            Pc = (P[a:a + 4_000_000] - t) @ R                   # world -> camera
+            z = Pc[:, 2]; zs = z.clamp(min=1e-6)
+            fx, cx, fy, cy = K
+            u = torch.round(fx * Pc[:, 0] / zs + cx).long(); v = torch.round(fy * Pc[:, 1] / zs + cy).long()
+            ok = (z > 1e-3) & (u >= 0) & (u < W) & (v >= 0) & (v < H)
+            uc, vc = u.clamp(0, W - 1), v.clamp(0, H - 1)
+            zf = Zt[vc, uc]
+            seen = ok & (zf > 0) & ((z - zf).abs() < 0.03 + 0.02 * z)
+            d = Dt[vc, uc]
+            n_dyn[a:a + 4_000_000] += (seen & d).int(); n_sta[a:a + 4_000_000] += (seen & ~d).int()
+    rm = ((n_dyn >= min_dyn) & (n_sta <= max_static)).cpu().numpy()
+    if rm.any():
+        _write_ply(path, xyz[~rm].astype(np.float32), rgb[~rm].astype(np.uint8))
+        _write_ply(os.path.join(os.path.dirname(path), "carved_pcd.ply"), xyz[rm].astype(np.float32), rgb[rm].astype(np.uint8))
+    print(f"[fusion] carving: {int(rm.sum()):,} of {len(xyz):,} map points removed "
+          f"(seen on dynamic pixels >= {min_dyn}x, on kept pixels <= {max_static}x, {len(frames)} frames)")
+    return int(rm.sum())
 
 
 def export_split_clouds(slam, out_dir, max_points=2_000_000, conf_coef=0.75):

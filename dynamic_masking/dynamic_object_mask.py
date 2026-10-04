@@ -110,15 +110,19 @@ class DynamicObjectDetector:
                 continue
             cls_ids = r.boxes.cls.tolist() if r.boxes is not None else [None] * len(r.masks.data)
             confs = r.boxes.conf.tolist() if r.boxes is not None else [None] * len(r.masks.data)
-            for m, c, p in zip(r.masks.data, cls_ids, confs):
+            # detection box (x1, y1, x2, y2) in this frame's pixels: unlike the mask it still covers the
+            # parts of a person hidden behind an occluder (legs behind a chair)
+            boxes = r.boxes.xyxy.tolist() if r.boxes is not None else [None] * len(r.masks.data)
+            for m, c, p, bx in zip(r.masks.data, cls_ids, confs, boxes):
                 if self.class_conf and c is not None and p is not None \
                         and p < self.class_conf.get(int(c), self.conf):
                     continue
                 m_resized = F.interpolate(m[None, None].float(), size=(H, W), mode="nearest")[0, 0].bool().cpu().numpy()
                 out.append({"cls": None if c is None else int(c),
                             "name": DYNAMIC_CLASS_NAMES.get(int(c), str(c)) if c is not None else "?",
-                            "conf": None if p is None else float(p), "area": int(m_resized.sum()), "mask": m_resized})
-        self.last_detections = [{k: v for k, v in d.items() if k != "mask"} for d in out]
+                            "conf": None if p is None else float(p), "area": int(m_resized.sum()), "mask": m_resized,
+                            "box": None if bx is None else [float(v) for v in bx]})
+        self.last_detections = [{k: v for k, v in d.items() if k not in ("mask", "box")} for d in out]
         return out
 
     @torch.no_grad()
