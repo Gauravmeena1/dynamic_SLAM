@@ -191,12 +191,12 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
     <p class="zh">Kachaka 自動建圖 · 3D SLAM · 即時動態物件移除</p>
     <p class="lede">The Kachaka robot drives a planned coverage route while an RGB-D camera records. A 3D SLAM server builds the map and, at the same time, removes people and moving objects so they never become map points. The 3D map is then aligned to the robot's 2D map and packaged for the robotic agent's navigation.</p>
     <div class="btns">
-      <a class="btn primary" href="https://github.com/h44343880/kachaka_mapping/tree/gaurav/dynamic-masking">
+      <a class="btn primary" href="https://github.com/Gauravmeena1/kachaka_mapping/tree/gaurav/dynamic-masking">
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         Code
       </a>
       <a class="btn" href="#start">Getting started</a>
-      <a class="btn" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md">Masking guide</a>
+      <a class="btn" href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md">Masking guide</a>
       <a class="btn" href="#results">Results</a>
     </div>
     <figure class="hero-fig">
@@ -419,7 +419,7 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
     </div>
 
     <div class="panel" id="p1">
-<div class="code"><pre>git clone https://github.com/h44343880/kachaka_mapping.git
+<div class="code"><pre>git clone https://github.com/Gauravmeena1/kachaka_mapping.git
 cd kachaka_mapping
 git switch gaurav/dynamic-masking
 python3 -m venv .venv &amp;&amp; source .venv/bin/activate
@@ -450,7 +450,7 @@ docker start "$KACHAKA_AI_CONTAINER" "$KACHAKA_SLAM_CONTAINER"
 $KACHAKA_PYTHON slam_tools/kachaka_ctl.py status
 slam_tools/cam_check.sh                   <span class="c"># camera must report USB 3.x</span>
 ./preflight.sh --name RUN</pre></div>
-      <p>Every <code>.env</code> key is described in the <a href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md">masking guide</a>. Ask Gaurav for the weights folder on the lab machine.</p>
+      <p>Every <code>.env</code> key is described in the <a href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md">masking guide</a>. Ask Gaurav for the weights folder on the lab machine.</p>
     </div>
 
     <div class="panel" id="p3" hidden>
@@ -522,13 +522,13 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
     <h2>Documentation</h2>
     <p class="sub">Everything below is on the <code>gaurav/dynamic-masking</code> branch.</p>
     <div class="docs">
-      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/README.md"><b>README</b><span>Planning toolkit, CLI, safety gates (中文 / English)</span></a>
-      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md"><b>Dynamic masking guide</b><span>Setup, offline test, live run, outputs, troubleshooting</span></a>
-      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/KNOWN_ISSUES.md"><b>Known issues</b><span>Field problems, causes and workarounds</span></a>
-      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/FIELD_NOTES_2026.md"><b>Field notes 2026</b><span>Lessons from on-site runs</span></a>
-      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/ALIGNMENT_VALIDATION_20260921.md"><b>Alignment validation</b><span>2D/3D alignment method and pass criteria</span></a>
-      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/docs/ROBOTIC_AGENT_BUNDLE_VALIDATION_20260922.md"><b>Robotic-agent bundle</b><span>Navigation bundle export and checks</span></a>
-      <a class="doc" href="https://github.com/h44343880/kachaka_mapping/blob/gaurav/dynamic-masking/CONTRIBUTING.md"><b>Contributing</b><span>Offline checks, safety rules, PR checklist</span></a>
+      <a class="doc" href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/README.md"><b>README</b><span>Planning toolkit, CLI, safety gates (中文 / English)</span></a>
+      <a class="doc" href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/docs/DYNAMIC_MASKING.md"><b>Dynamic masking guide</b><span>Setup, offline test, live run, outputs, troubleshooting</span></a>
+      <a class="doc" href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/KNOWN_ISSUES.md"><b>Known issues</b><span>Field problems, causes and workarounds</span></a>
+      <a class="doc" href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/docs/FIELD_NOTES_2026.md"><b>Field notes 2026</b><span>Lessons from on-site runs</span></a>
+      <a class="doc" href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/docs/ALIGNMENT_VALIDATION_20260921.md"><b>Alignment validation</b><span>2D/3D alignment method and pass criteria</span></a>
+      <a class="doc" href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/docs/ROBOTIC_AGENT_BUNDLE_VALIDATION_20260922.md"><b>Robotic-agent bundle</b><span>Navigation bundle export and checks</span></a>
+      <a class="doc" href="https://github.com/Gauravmeena1/kachaka_mapping/blob/gaurav/dynamic-masking/CONTRIBUTING.md"><b>Contributing</b><span>Offline checks, safety rules, PR checklist</span></a>
     </div>
   </div>
 </section>
@@ -563,7 +563,7 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
 
 <footer>
   <div class="wrap">
-    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav; mapping toolkit in <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated 5 October 2026.
+    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav. Forked from the mapping toolkit <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated 5 October 2026.
   </div>
 </footer>
 
