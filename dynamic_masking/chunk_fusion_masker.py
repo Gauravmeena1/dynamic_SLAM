@@ -67,7 +67,11 @@ class ChunkFusionMasker:
                  object_policy: str = "all", attach_px: int = 10, motion_thr: float = 0.3, min_valid_px: int = 50,
                  vote_iou: float = 0.3, geo_two_sided: bool = True, conf_gate_pct: float = 0.0, grow_carried: bool = True,
                  grow_depth_margin_m: float = 0.4, two_sided_strong_factor: float = 5.0, grow_max_area_ratio: float = 1.0,
-                 geo_gate: str = "none", geo_anchor_px: int = 30):
+                 geo_gate: str = "none", geo_anchor_px: int = 30,
+                 person_dilate_px: int = 0, carried_rule: str = "touch", carried_motion_thr: float = 0.15,
+                 person_box_fill: bool = False, box_fill_margin_m: float = 0.25, box_fill_expand: float = 0.05,
+                 bridge_max_gap: int = 1, box_fill_down: float = 0.0, edge_ring_px: int = 0,
+                 edge_jump_m: float = 0.10):
         """Static-furniture gates (2026-09-04, §12).  DEFAULTS SINCE §12.1 (2026-09-08) are the
         "g_two_s5_grow" combination: geo_two_sided=True + two_sided_strong_factor=5.0 + grow_carried=True,
         with conf_gate_pct left OFF.  Chosen over plain two-sided/conf gating because it is the only
@@ -90,6 +94,38 @@ class ChunkFusionMasker:
         if geo_gate not in ("none", "anchor"):
             raise ValueError(f"geo_gate must be 'none' or 'anchor', got {geo_gate!r}")
         self.geo_gate = geo_gate; self.geo_anchor_px = int(geo_anchor_px)
+        # person_dilate_px (2026-09-30): grow every person mask by this many pixels before it is
+        # removed. YOLO outlines sit a few px inside the silhouette, and depth "flying pixels" at the
+        # person's edge survive as a thin shell (seen as a small leftover "person" instance in the
+        # semantic map). 0 = off.
+        self.person_dilate_px = int(person_dilate_px)
+        # carried_rule (2026-09-30): "touch" = an object touching a person (attach_px) counts as carried
+        # (behaviour up to now; a still suitcase next to a still person is removed);
+        # "touch_and_moving" = it must also move itself: >= carried_motion_thr of its valid pixels above
+        # the frame's motion threshold (lower than motion_thr, because carried objects move slowly).
+        if carried_rule not in ("touch", "touch_and_moving"):
+            raise ValueError(f"carried_rule must be 'touch' or 'touch_and_moving', got {carried_rule!r}")
+        self.carried_rule = carried_rule; self.carried_motion_thr = float(carried_motion_thr)
+        # person_box_fill (2026-10-01): YOLO's person MASK stops at an occluder (legs behind a stool),
+        # but its detection BOX still spans the whole person. Inside the box (expanded by
+        # box_fill_expand of its size), pixels whose depth lies in the person's depth band
+        # [p10 - margin, p90 + margin] (from the mask's own depths) are added to the person.
+        # A closer occluder and the farther background fall outside the band and stay.
+        self.person_box_fill = bool(person_box_fill)
+        self.box_fill_margin_m = float(box_fill_margin_m); self.box_fill_expand = float(box_fill_expand)
+        # bridge_max_gap (2026-10-01): sem_bridge fills a gap of up to this many consecutive frames
+        # without a detection, when the same chunk has a detection before AND after the gap (masks
+        # are chained through the neighbour flows from both sides). 1 = previous behaviour.
+        self.bridge_max_gap = max(1, int(bridge_max_gap))
+        # box_fill_down (2026-10-01): a person leaning on furniture is detected only above it -- the
+        # YOLO box ends at the seat, the legs behind/under it are outside the box. The box-fill window
+        # is extended downwards by box_fill_down x box height (same depth band). 0 = off.
+        # edge_ring_px (2026-10-01): depth "flying pixels" between a removed region and the
+        # background (mixed foreground/background depth) survive as a thin line in the map. Pixels
+        # within edge_ring_px of the final mask whose local 5x5 depth range exceeds
+        # max(edge_jump_m, 4 % of depth) are removed too. 0 = off.
+        self.box_fill_down = max(0.0, float(box_fill_down))
+        self.edge_ring_px = int(edge_ring_px); self.edge_jump_m = float(edge_jump_m)
         self.geo_two_sided = bool(geo_two_sided); self.conf_gate_pct = float(conf_gate_pct)
         self.grow_carried = bool(grow_carried); self.grow_depth_margin_m = float(grow_depth_margin_m)
         # two_sided_strong_factor > 0: a pixel also votes if ONE side alone has residual > factor x that side's
@@ -164,6 +200,27 @@ class ChunkFusionMasker:
             else:
                 sem_all[k] = self.semantic.get_mask(imgs[k], clean=True)
             dets[k] = [(d["name"], round(d["conf"], 2)) for d in self.semantic.last_detections]
+        person_fill = np.zeros((T, H, W), bool)
+        if self.person_box_fill and use_instances:
+            for k in range(T):
+                for d in inst[k]:
+                    if d["cls"] != 0 or d.get("box") is None:
+                        continue
+                    dk = dep[k]; dm = d["mask"] & (dk > 0)
+                    if dm.sum() < 50:
+                        continue
+                    lo = np.percentile(dk[dm], 10) - self.box_fill_margin_m
+                    hi = np.percentile(dk[dm], 90) + self.box_fill_margin_m
+                    x1, y1, x2, y2 = d["box"]; ex, ey = self.box_fill_expand * (x2 - x1), self.box_fill_expand * (y2 - y1)
+                    ey_down = ey + self.box_fill_down * (y2 - y1)
+                    x1, y1 = max(0, int(x1 - ex)), max(0, int(y1 - ey)); x2, y2 = min(W, int(np.ceil(x2 + ex))), min(H, int(np.ceil(y2 + ey_down)))
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+                    win = dk[y1:y2, x1:x2]
+                    cand = np.zeros((H, W), bool); cand[y1:y2, x1:x2] = (win > 0) & (win >= lo) & (win <= hi)
+                    person_fill[k] |= cand & ~sem_person[k]
+                if person_fill[k].any():
+                    sem_person[k] |= person_fill[k]; sem_all[k] |= person_fill[k]
         sem = sem_all.copy()                       # policy "all": remove everything detected
 
         # When the geometry runs motion-compensated, the detector must compute its own flow on
@@ -244,7 +301,12 @@ class ChunkFusionMasker:
                         if int(sel.sum()) >= self.min_valid_px:
                             o["motion_frac"] = float((gres[k]["residual"][sel] > gres[k]["info"]["threshold_px"]).mean())
                     o["moving"] = bool(o["motion_frac"] is not None and o["motion_frac"] >= self.motion_thr)
-                    o["own"] = o["attached"] or o["moving"]; o["mask"] = d["mask"]
+                    if self.carried_rule == "touch_and_moving":
+                        o["carried"] = bool(o["attached"] and o["motion_frac"] is not None
+                                            and o["motion_frac"] >= self.carried_motion_thr)
+                    else:
+                        o["carried"] = o["attached"]
+                    o["own"] = o["carried"] or o["moving"]; o["mask"] = d["mask"]
                     objects[k].append(o)
             # temporal majority vote with the matching instance in k-1 / k+1 (masks warped into frame k)
             def best_match(o, cands, flow):
@@ -293,6 +355,13 @@ class ChunkFusionMasker:
                     if g.sum() <= self.grow_max_area_ratio * sem_person[k].sum():     # a carried object is smaller than the person
                         grown[k] = g; sem[k] = sem[k] | grown[k]
 
+        person_grow = np.zeros((T, H, W), bool)
+        if self.person_dilate_px > 0:
+            for k in range(T):
+                if sem_person[k].any():
+                    person_grow[k] = _dilate(sem_person[k], self.person_dilate_px) & ~sem[k]
+                    sem[k] = sem[k] | person_grow[k]
+
         union = sem | geo
         prop = np.zeros((T, H, W), bool)
         if prop_mode in ("union", "sem") and T > 1:
@@ -323,9 +392,47 @@ class ChunkFusionMasker:
                 else:
                     continue
                 prop[k] = warp_mask(prev_sem, prev_flow) | warp_mask(sem[k + 1], nxt[k])
+            if self.bridge_max_gap > 1:
+                has = [bool(sem[t].any()) for t in range(T)]
+                for k in range(T):
+                    if has[k] or prop[k].any():
+                        continue
+                    j = next((t for t in range(k - 1, -1, -1) if has[t]), None)
+                    l = next((t for t in range(k + 1, T) if has[t]), None)
+                    mf = mb = None
+                    if j is not None and k - j <= self.bridge_max_gap:
+                        mf = sem[j]
+                        for t in range(j + 1, k + 1):
+                            mf = warp_mask(mf, fwd[t])
+                    if l is not None and l - k <= self.bridge_max_gap:
+                        mb = sem[l]
+                        for t in range(l - 1, k - 1, -1):
+                            mb = warp_mask(mb, nxt[t])
+                    if mf is not None and mb is not None and (l - j - 1) <= self.bridge_max_gap:
+                        prop[k] = mf | mb                              # gap with detections on both sides
+                    else:
+                        # one side only: allowed solely for something entering / leaving through the
+                        # image border (the carried-over mask touches it); elsewhere it could paint a
+                        # person into frames they have not reached yet
+                        for mm in (mf, mb):
+                            if mm is not None and mm.any() and (mm[:3].any() or mm[-3:].any() or mm[:, :3].any() or mm[:, -3:].any()):
+                                prop[k] |= mm
             union = union | prop
         if T > 1:
             self._prev_tail = (sem[T - 2].copy(), fwd[T - 1], imgs[T - 1].copy())
+
+        edge_ring = np.zeros((T, H, W), bool)
+        if self.edge_ring_px > 0:
+            k5 = np.ones((5, 5), np.uint8)
+            for k in range(T):
+                if not union[k].any():
+                    continue
+                dk = dep[k]; valid = dk > 0
+                dmax = cv2.dilate(np.where(valid, dk, 0).astype(np.float32), k5)
+                dmin = -cv2.dilate(np.where(valid, -dk, -1e6).astype(np.float32), k5)
+                jump = valid & ((dmax - dmin) > np.maximum(self.edge_jump_m, 0.04 * dk))
+                edge_ring[k] = _dilate(union[k], self.edge_ring_px) & ~union[k] & jump
+                union[k] |= edge_ring[k]
 
         if self.record:
             for k in range(T):
@@ -344,6 +451,8 @@ class ChunkFusionMasker:
                                          irls_inlier=g.get("irls_inlier_frac"), irls_res=g.get("irls_fit_residual_median_px"),
                                          irls_corr=g.get("irls_correction_median_px"), skipped=g.get("skipped"),
                                          geo_gated_area=float(geo_gated[k].mean()),
+                                         person_grow_area=float(person_grow[k].mean()), sem_person=sem_person[k].copy(),
+                                         person_fill_area=float(person_fill[k].mean()), edge_ring_area=float(edge_ring[k].mean()),
                                          sem=sem[k].copy(), geo=geo[k].copy(), prop=prop[k].copy(), union=union[k].copy()))
         self._frame_counter += T
         return torch.from_numpy(union)
