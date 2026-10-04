@@ -52,7 +52,7 @@ Assumes the team's lab machine: Docker, the SLAM image (`slam_node:malong`), the
 
 ```bash
 # 1. get the branch
-git clone https://github.com/h44343880/kachaka_mapping.git
+git clone https://github.com/Gauravmeena1/kachaka_mapping.git
 cd kachaka_mapping
 git switch gaurav/dynamic-masking
 
