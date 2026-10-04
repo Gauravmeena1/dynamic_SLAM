@@ -1,6 +1,6 @@
 # 動態物件遮罩 + 即時 3D SLAM / Dynamic-object masking with live 3D SLAM
 
-Branch `gaurav/dynamic-masking` · Gaurav · 2026-09-28
+Branch `gaurav/dynamic-masking` · Gaurav · 2026-09-28, updated 2026-10-05
 
 這個分支把 Gaurav 的動態物件遮罩方法接進即時 3D SLAM：人一律移除；其他可移動物件（筆電、背包、瓶子…）只有在移動或被拿著時才移除，靜止的物件保留在地圖中。
 This branch adds Gaurav's dynamic-object masking to the live 3D SLAM run by `run_bridge_oneshot.sh`. People are always removed. Other movable objects (laptop, bag, bottle…) are removed only while they move or are carried; static objects stay in the map. Masked pixels never become map points.
@@ -25,7 +25,24 @@ Per chunk of 16 frames:
 
 1. **Semantic (YOLOv9e-seg):** person confidence ≥ 0.15 (others ≥ 0.25). A person is always removed. Any other movable-class object is removed only if it is **moving** (≥ 30 % of its pixels have a flow residual above the frame threshold) or **carried** (touches a person, 10 px).
 2. **Motion (FlowSeek optical flow vs. camera-pose flow):** adaptive threshold `median + 3·MAD`, checked against both neighbour frames. **Geo gate (new, default `anchor`):** a motion blob is kept only if it touches a movable-class detection (30 px). On the 22 Sept lab capture this cut person-free frames with more than 1 % removed from 59/296 to 1/296, with the people removal unchanged. Trade-off: an object YOLO cannot label is no longer removed by motion alone. `DYNAMIC_GEO_GATE=none` gives the old behaviour.
-3. **Bridge:** fills a single-frame YOLO miss between two detections.
+3. **Bridge:** fills up to 3 frames without a YOLO detection when the same chunk has a detection before and after the gap (one side only is allowed for a person entering or leaving through the image border).
+4. **Person cleanup (2026-10-01):** person masks grow by 5 px; inside the person's detection box, pixels at the person's depth are added (legs behind a stool), and the box is extended 0.6 × its height downwards (legs under furniture); depth-jump ("flying") pixels within 12 px of the final mask are removed. The overlap frame shared by two submaps gets the later chunk's mask too.
+5. **3D carving (2026-10-01):** after the map is written, every point is projected into every frame. A point that frames only ever see on removed pixels (and on at most one kept pixel, its own) is dropped and saved to `carved_pcd.ply`. This removes points that other frames' predicted depth puts on a person, which no 2D mask can stop.
+
+All of this is on by default. Switches: put them in `.env` (every `slam_tools` script loads it, also when `run_bridge_oneshot.sh` starts the server in tmux):
+
+| Variable | Default | Before 2026-10-01 |
+|---|---|---|
+| `DYNAMIC_GEO_GATE` | `anchor` | `none` |
+| `DYNAMIC_PERSON_DILATE_PX` | `5` | `0` |
+| `DYNAMIC_PERSON_BOX_FILL` | `1` | `0` |
+| `DYNAMIC_BRIDGE_MAX_GAP` | `3` | `1` |
+| `DYNAMIC_BOX_FILL_DOWN` | `0.6` | `0` |
+| `DYNAMIC_EDGE_RING_PX` | `12` | `0` |
+| `DYNAMIC_CARVE` | `1` | `0` |
+| `SEMANTIC` | unset (`--no_deploy`) | — set `1` for semantic instances + deploy files (~20 GB more GPU memory) |
+
+Trade-off: when a person leans on a stool or box, the per-frame mask also covers that object; it stays in the map through the other views.
 
 ---
 
@@ -184,6 +201,8 @@ Never kill the SLAM server while it records or saves: the map in memory is lost.
 | Robot pose log, route | `artifacts/runs/pose2d_RUN.csv`, `traj_RUN.csv`, `goals_RUN.csv` |
 | 3D map, dynamic objects removed | `$KACHAKA_TOOLS_DIR/outputs_malong/RUN/static_only_pcd.ply` |
 | 3D map before removal / removed points only | `all_points_pcd.ply` / `dynamic_pcd.ply` (same folder) |
+| Points removed by 3D carving | `carved_pcd.ply` (same folder) |
+| Semantic map + deploy files (only with `SEMANTIC=1`) | `combined_pcd.ply` and the deploy folder (same folder) |
 | Every frame, coloured by channel + per-frame % | `mask_viz/*.jpg`, `mask_viz/removed.csv` |
 | Bird's-eye before / after | `bev_compare.png` (made by `bev_compare.py`) |
 
@@ -210,4 +229,5 @@ Open the `.ply` files in CloudCompare or MeshLab. The three point files are samp
 
 - Offline, `mapping_20260922_01` (389 frames, lab, people walking/sitting): with the geo gate, person-free frames with > 1 % removed 59/296 → 1/296; YOLO-channel removal unchanged; reproduced through this branch's `slam_tools` (mean removed 2.18 %, motion-only 0.08 %).
 - Live, map `lab_20260925` (ID c3bff72d): runs `run3`, `move1` (people walking, sitting, carrying a bottle removed). Map `lab_20260927` (ID 623d8033): `run1`, 10/19 goals.
-- Not yet validated: alignment (`align.sh` needs the semantic export that `--no_deploy` skips).
+- Live with `SEMANTIC=1`, map `Map803_3`, run `map803_0930_run5` (181 frames, people leaning on a stool and boxes): person points left in the map (checked against SAM 3 outlines and sensor depth) 36,244 → 10,149 (person fill, bridge) → 5,225 → 3,546 (box fill down, edge ring, carving). Much of the rest is box edges under a hand. Alignment RMSE 0.077 m with the camera lever arm corrected; 57/68 semantic objects get a navigation goal.
+- Without `SEMANTIC=1`, alignment cannot run (`align.sh` needs the semantic export that `--no_deploy` skips).
