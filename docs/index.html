@@ -149,6 +149,17 @@ pre .c { color: var(--muted); }
 .doc b { display: block; font-size: 15px; }
 .doc span { font-size: 13.5px; color: var(--muted); }
 
+.timeline { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--border); }
+.timeline li { position: relative; padding: 0 0 18px 22px; display: grid; grid-template-columns: 110px 1fr; gap: 4px 16px; font-size: 15px; }
+.timeline li:last-child { padding-bottom: 0; }
+.timeline li::before { content: ""; position: absolute; left: -7px; top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--accent); }
+.timeline li:first-child::before { background: var(--accent); }
+.timeline time { color: var(--muted); font-size: 13.5px; font-weight: 600; padding-top: 1px; white-space: nowrap; }
+@media (max-width: 560px) { .timeline li { grid-template-columns: 1fr; } }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
+.steps div { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: var(--muted); line-height: 1.45; }
+.steps b { display: block; color: var(--text); font-size: 14.5px; margin-bottom: 2px; }
+.steps code { font-size: 11.5px; }
 ul.plain { padding-left: 20px; margin: 8px 0 0; }
 ul.plain li { margin: 6px 0; }
 footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(--muted); font-size: 14px; }
@@ -161,6 +172,7 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
     <a class="brand" href="#top">Kachaka 3D SLAM</a>
     <ul>
       <li><a href="#overview">Overview</a></li>
+      <li><a href="#news">What's new</a></li>
       <li><a href="#pipeline">Pipeline</a></li>
       <li><a href="#masking">Dynamic masking</a></li>
       <li><a href="#results">Results</a></li>
@@ -209,6 +221,20 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
   </div>
 </section>
 
+<section id="news">
+  <div class="wrap">
+    <h2>What's new</h2>
+    <p class="sub">Latest changes on the <code>gaurav/dynamic-masking</code> branch. Each Oct 1 change can be switched off in <code>.env</code>, so older results can be reproduced.</p>
+    <ol class="timeline">
+      <li><time>Oct 1, 2026</time><div><b>Person points left in the 3D map: 36,244 → 3,546.</b> Five changes against people leaning on stools and boxes: mask dilation, filling the person's box at their depth (and below it), a 3-frame bridge, a depth-edge ring, and multi-view 3D carving. Also a fix for the overlap frame shared by two submaps. <a href="#cleanup">Details</a></div></li>
+      <li><time>Oct 1, 2026</time><div><b><code>SEMANTIC=1</code></b> in <code>run_t1_server.sh</code> builds the semantic instance map and the deploy files in the same run, so alignment and the navigation bundle work with masking on.</div></li>
+      <li><time>Sep 30, 2026</time><div><b>SAM 3.1 compared fairly with YOLO.</b> An earlier SAM 3 result came from a class-id bug; after the fix the two detectors find people in almost the same frames (117 vs 116). A stricter "carried" rule was added as an option (off by default).</div></li>
+      <li><time>Sep 28, 2026</time><div><b>Geo gate.</b> Motion-only blobs must touch a detected movable object. Person-free frames with &gt;1 % removed: 59 → 1 of 296.</div></li>
+      <li><time>Sep 25, 2026</time><div><b>Live mask view.</b> The 3D viewer shows removed points in red, and every frame is saved with its mask to <code>mask_viz/</code>.</div></li>
+    </ol>
+  </div>
+</section>
+
 <section id="pipeline">
   <div class="wrap">
     <h2>How the whole system works</h2>
@@ -250,7 +276,7 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
         <h4>Map for navigation</h4>
         <ol>
           <li><b>Sim(2) alignment</b><span>SLAM trajectory ↔ Pose2D log, camera lever arm corrected</span></li>
-          <li><b>Semantic instances</b><span>objects with positions in the robot's map frame</span></li>
+          <li><b>Semantic instances</b><span>objects with positions in the robot's map frame (<code>SEMANTIC=1</code>)</span></li>
           <li><b>Navigation bundle</b><span>occupancy + objects for the robotic agent</span></li>
         </ol>
         <div class="out">→ alignment report, nav bundle</div>
@@ -305,11 +331,19 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
       </div>
       <div class="ch" style="--c: var(--blue)">
         <h4><i></i>Bridge</h4>
-        <p>Fills a single-frame detector miss between two detections of the same object, so one blurry frame does not leave a "ghost" in the map.</p>
+        <p>Fills up to 3 frames without a detection when the same chunk has a detection before and after the gap, so a few blurry frames do not leave a "ghost" in the map.</p><p>From one side only, it fills a gap only for something entering or leaving through the image border.</p>
       </div>
     </div>
 
-    <div class="rule"><b>Oct 1 update: 3D carving and edge cleanup.</b> A 2D mask cannot stop points that <em>other</em> frames' depth predictions place on a person. Every map point is now projected into every frame; a point seen on a removed pixel and never confirmed by another view is carved out. The person box is also extended downwards (legs behind furniture), and a 12 px ring of depth-jump "flying" pixels around each mask is dropped.</div>
+    <div class="rule" id="cleanup"><b>Person cleanup (Oct 1).</b> People leaning on a stool or box still left points in the map: YOLO's mask stops at the occluder, depth edges leave "flying" pixels, and other frames' predicted depth can put a point where a person stands. Five steps, all on by default:
+      <div class="steps">
+        <div><b>Dilate</b>Grow every person mask by 5 px.<br><code>DYNAMIC_PERSON_DILATE_PX=5</code></div>
+        <div><b>Box fill</b>Inside the person's detection box, add pixels at the person's depth, and extend the box 0.6× downwards for legs under furniture.<br><code>DYNAMIC_PERSON_BOX_FILL=1</code> <code>DYNAMIC_BOX_FILL_DOWN=0.6</code></div>
+        <div><b>Bridge 3 frames</b>Fill short detector gaps.<br><code>DYNAMIC_BRIDGE_MAX_GAP=3</code></div>
+        <div><b>Edge ring</b>Drop depth-jump pixels within 12 px of the mask.<br><code>DYNAMIC_EDGE_RING_PX=12</code></div>
+        <div><b>3D carving</b>Drop map points that frames only ever see on removed pixels; they are saved to <code>carved_pcd.ply</code>.<br><code>DYNAMIC_CARVE=1</code></div>
+      </div>
+    </div>
 
     <div class="grid2">
       <figure>
@@ -430,7 +464,7 @@ python3 slam_tools/replay_ab.py mapping_20260922_01 offline_test1
 <span class="c"># top-down before | after | removed</span>
 docker exec "$KACHAKA_AI_CONTAINER" python \
   "$KACHAKA_CODE_DIR_CT/kachaka_mapping/slam_tools/bev_compare.py" /fungi/outputs_malong/offline_test1</pre></div>
-      <p>Expected on <code>mapping_20260922_01</code>: about 2.2 % of pixels removed per frame, about 0.1 % from motion alone.</p>
+      <p>Expected on <code>mapping_20260922_01</code>: about 2.2 % of pixels removed per frame, about 0.1 % from motion alone (measured before the Oct 1 person cleanup, which removes a little more around people). To compare with the old behaviour, start the server with <code>DYNAMIC_PERSON_DILATE_PX=0 DYNAMIC_PERSON_BOX_FILL=0 DYNAMIC_BRIDGE_MAX_GAP=1 DYNAMIC_BOX_FILL_DOWN=0 DYNAMIC_EDGE_RING_PX=0 DYNAMIC_CARVE=0</code>.</p>
     </div>
 
     <div class="panel" id="p4" hidden>
@@ -441,9 +475,13 @@ docker exec "$KACHAKA_AI_CONTAINER" python \
 tmux new -s mapping
 ./run_bridge_oneshot.sh --name RUN --venue VENUE --reuse-map --goal-timeout 60
 
+<span class="c"># semantic instances + deploy files (needed for alignment and the nav bundle):
+# add SEMANTIC=1 to .env before the run; every slam_tools script loads .env</span>
+echo SEMANTIC=1 &gt;&gt; .env
+
 <span class="c"># 3. watch live</span>
 python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask --port 8092</pre></div>
-      <p>Use a new <code>--name</code> every run and a new <code>--venue</code> whenever the App map changes. Start about 1 m off the dock; planning from the dock fails.</p>
+      <p>The <code>DYNAMIC_*</code> switches go in <code>.env</code> the same way. Use a new <code>--name</code> every run and a new <code>--venue</code> whenever the App map changes. Start about 1 m off the dock; planning from the dock fails.</p>
     </div>
 
     <div class="callout"><b>⚠ Safety</b><span>A full run moves the robot. Always run <code>--plan-only</code> first, check the preview, keep the path clear, and keep a trained person within reach of the emergency stop. Don't use <code>-y</code> on a first run. Never kill the SLAM server while it records or saves, because the map in memory is lost.</span></div>
@@ -513,8 +551,7 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
         <h3 style="margin-top:0">Being evaluated</h3>
         <ul class="plain">
           <li>YOLO ∪ SAM 3.1 ensemble for offline maps (+10 % recall).</li>
-          <li>A few-pixel person-mask dilation for edge residue.</li>
-          <li>A stricter "carried" rule: carried only if moving, or mostly inside the person mask.</li>
+          <li>A stricter "carried" rule (<code>carried_rule="touch_and_moving"</code>, in the code but off): it keeps a still suitcase next to a still person, but drops a phone held in the hand. Next variant: carried if moving, or mostly inside the person mask.</li>
           <li>Motion compensation with a fixed threshold in compensated space (the adaptive threshold cancelled the gain).</li>
         </ul>
       </div>
@@ -526,7 +563,7 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
 
 <footer>
   <div class="wrap">
-    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav; mapping toolkit in <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated October 2026.
+    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav; mapping toolkit in <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated 5 October 2026.
   </div>
 </footer>
 
