@@ -1,26 +1,73 @@
-# Kachaka 自動建圖路線工具 / Kachaka Automatic Mapping Route Tools
+# Kachaka 3D SLAM 自動建圖 / Kachaka 3D SLAM Automatic Mapping
 
-這個專案從 Kachaka 2D occupancy map 產生覆蓋路徑、導航目標與人工審查圖，並可在現場串接 pose logger、3D SLAM、Kachaka navigation 與 alignment，完成建圖資料收集。
+Kachaka 依覆蓋路徑自動行駛，RGB-D 相機同時錄影；3D SLAM 在建圖時即時移除人與移動中的物件，最後把 3D 地圖對齊到機器人的 2D 地圖，並輸出給 robotic agent 導航使用。
 
-This repository generates coverage paths, navigation goals, and review images from a Kachaka 2D occupancy map. At a configured site it can also coordinate pose logging, 3D SLAM, Kachaka navigation, and alignment for one mapping run.
+The Kachaka robot drives a planned coverage route while an RGB-D camera records. A 3D SLAM server builds the map and, at the same time, removes people and moving objects so they never become map points. The 3D map is then aligned to the robot's 2D map and packaged for the robotic agent's navigation.
 
-**專案網頁 / Project page:** <https://gauravmeena1.github.io/kachaka_mapping/> · 整個系統（規劃、3D SLAM、動態物件移除、alignment）的概覽在 [`docs/index.html`](docs/index.html)，以 GitHub Pages 從 `/docs` 發布。An overview of the whole system (planning, 3D SLAM, dynamic-object removal, alignment) is in [`docs/index.html`](docs/index.html), published with GitHub Pages from `/docs`.
+**專案網頁 / Project page:** <https://gauravmeena1.github.io/kachaka_mapping/>
+
+![Live removal: raw frames and the same frames with the person and a carried bottle masked in red](docs/assets/live_removal.jpg)
 
 > **安全 / Safety:** 完整流程會移動 Kachaka，部分相機調整指令也會移動機械手臂。第一次使用請先跑離線測試與 `--plan-only`，正式執行時必須有人守在急停按鈕旁。The full workflow moves the robot, and some camera-tuning commands move the arm. Run offline tests and `--plan-only` first. A trained operator must stay within reach of the emergency stop during hardware runs.
 
 ## 功能 / Features
+
+**規劃與行駛 / Planning and driving**
 
 - 蛇行或螺旋覆蓋路徑 / Boustrophedon or spiral coverage paths
 - 機器人半徑、牆面淨空與連通區域檢查 / Robot-radius, wall-clearance, and connectivity checks
 - Waypoint 抽稀、最小點距與 yaw 變化限制 / Waypoint thinning, minimum-distance, and yaw-step limits
 - 帶方向及順序的預覽圖 / Directional, ordered route previews
 - 導航逾時安全取消 / Safe cancellation after navigation timeout
-- Pose2D logger、3D SLAM、alignment 串接 / Pose2D logger, 3D SLAM, and alignment orchestration
 - Container、相機、手臂、磁碟與殘留程序 preflight / Preflight checks for containers, camera, arm, disk, and stale processes
+
+**3D SLAM 與動態物件移除 / 3D SLAM and dynamic-object removal**
+
+- 人一律移除；其他可移動物件只有移動或被拿著時才移除 / People are always removed; other movable objects only while they move or are carried
+- YOLOv9e-seg 語意遮罩 + FlowSeek 光流運動殘差 + geo gate / YOLOv9e-seg semantic masks + FlowSeek motion residual + geo gate
+- 人物遮罩擴張、box fill、3 幀 bridge、深度邊緣環 / Person-mask dilation, box fill, 3-frame bridge, depth-edge ring
+- 多視角 3D carving，移除殘留在地圖中的人物點 / Multi-view 3D carving of person points left in the map
+- 即時觀看：3D 地圖中被移除的點顯示為紅色 / Live view: removed points shown in red in the 3D map
+
+**對齊與輸出 / Alignment and export**
+
+- Pose2D logger 與 Sim(2) 2D/3D alignment / Pose2D logger and Sim(2) 2D/3D alignment
+- 語意物件與 robotic agent 導航 bundle / Semantic instances and a navigation bundle for the robotic agent
+
+## 系統流程 / How it works
+
+```mermaid
+flowchart LR
+  A["Kachaka App<br/>2D map"] --> B["Coverage path<br/>+ goals + preview"]
+  B --> C["Kachaka move_to_pose<br/>+ Pose2D logger"]
+  C --> D["RealSense D435<br/>→ ROS 2 gateway"]
+  D --> E["3D SLAM server<br/>+ dynamic masking"]
+  E --> F["3D carving<br/>static_only_pcd.ply"]
+  F --> G["Sim(2) alignment<br/>to the 2D map"]
+  G --> H["Navigation bundle<br/>for robotic agent"]
+```
+
+`run_bridge_oneshot.sh` 以七個階段跑完整個流程，機器人移動前會停下來兩次請操作者確認。`run_bridge_oneshot.sh` runs the whole session in seven stages and stops twice for the operator before the robot moves:
+1 preflight + map check → 2 export 2D map → 3 plan + preview → 4 pose logger → 5 SLAM + masking → 6 drive goals → 7 alignment.
+
+## 結果 / Results
+
+| 測試 / Test | 結果 / Result |
+|---|---|
+| 2D/3D alignment RMSE（map803 run5，修正 lever arm）/ with lever arm corrected | **0.077 m** (pass ≤ 0.30 m) |
+| 無人畫面中被誤刪 >1 % 的幀數（geo gate 前→後）/ Person-free frames with >1 % removed, before → after geo gate | **59 → 1** of 296 |
+| 地圖中殘留的人物點（v1 → v4）/ Person points left in the 3D map | **36,244 → 3,546** |
+| 可取得導航目標的語意物件 / Semantic objects with a navigation goal | **57 / 68** |
+
+| 誤刪修正 / False-positive fix (geo gate) | 3D carving 前後 / Before and after 3D carving |
+|---|---|
+| ![Motion-only false positives on a door and shelves, removed by the geo gate](docs/assets/false_positive_fix.jpg) | ![Person points in the 3D map before and after v4](docs/assets/carving_before_after.jpg) |
+
+完整數據與條件見 [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md) 與專案網頁。Full numbers and conditions are in [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md) and on the project page.
 
 ## 專案結構 / Repository layout
 
-| File | 中文用途 / Purpose |
+| Path | 中文用途 / Purpose |
 |---|---|
 | `run_bridge_oneshot.sh` | 七階段現場流程；移動前會確認 / Seven-stage field workflow with confirmation before motion |
 | `make_bridge_traj.py` | 從 2D map 產生密集覆蓋路徑 / Generate a dense coverage trajectory from a 2D map |
@@ -28,18 +75,22 @@ This repository generates coverage paths, navigation goals, and review images fr
 | `preview_traj.py` | 將路徑疊在地圖上 / Render a trajectory over the map |
 | `preflight.sh` | 唯讀現場檢查 / Read-only site checks |
 | `arm_cam_tune.sh` | 相機畫面與手臂收合姿態調整 / Camera view and arm stow-pose tuning |
+| `dynamic_masking/` | 動態物件遮罩方法（YOLO、光流、融合規則）/ The masking method (YOLO, optical flow, fusion rules) |
+| `slam_integration/` | 把遮罩接進 SLAM server（`fusion_solver.py`、3D carving、patches、`install.sh`）/ Hooks the masker into the SLAM server (`fusion_solver.py`, 3D carving, patches, `install.sh`) |
+| `slam_tools/` | SLAM 啟動、即時觀看、重播、機器人控制 / SLAM launchers, live view, replay, robot control |
 | `blur_vs_omega.py` | 選用的模糊與角速度分析 / Optional blur-versus-angular-speed analysis |
 | `test_drive_waypoints.py` | 不需機器人的離線測試 / Offline tests without a robot |
+| `docs/` | 操作指南、驗證報告、專案網頁 / Guides, validation reports, project page |
 | `KNOWN_ISSUES.md` | 實機問題、原因與排除紀錄 / Field issues, causes, and workarounds |
 
-生成物預設寫入 `artifacts/runs/` 與 `artifacts/previews/`，兩者都不會進 Git。Generated files go to `artifacts/runs/` and `artifacts/previews/`; both are ignored by Git.
+生成物預設寫入 `artifacts/runs/` 與 `artifacts/previews/`，兩者都不會進 Git。模型權重（`yolov9e-seg.pt`、FlowSeek）也不在 Git 中。Generated files go to `artifacts/runs/` and `artifacts/previews/`; both are ignored by Git. Model weights (`yolov9e-seg.pt`, FlowSeek) are not in Git either.
 
 ## 快速開始 / Quick start (offline)
 
 需求 / Requirements: Python 3.10+.
 
 ```bash
-git clone <REPOSITORY_URL>
+git clone https://github.com/Gauravmeena1/kachaka_mapping.git
 cd kachaka_mapping
 
 python3 -m venv .venv
@@ -142,8 +193,16 @@ python preview_traj.py --help
 
 ## 動態物件遮罩 / Dynamic-object masking
 
-`dynamic_masking/`、`slam_integration/`、`slam_tools/` 讓 3D SLAM 在建圖時即時移除人與移動中的物件，並可即時觀看。安裝與操作步驟見 [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md)。
-`dynamic_masking/`, `slam_integration/` and `slam_tools/` remove people and moving objects from the 3D map while it is built, with a live view. Setup and operation: [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md).
+`dynamic_masking/`、`slam_integration/`、`slam_tools/` 讓 3D SLAM 在建圖時即時移除人與移動中的物件，並可即時觀看。安裝、離線測試、即時建圖與所有開關（`.env` 中的 `DYNAMIC_*`、`SEMANTIC=1`）見 [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md)。
+`dynamic_masking/`, `slam_integration/` and `slam_tools/` remove people and moving objects from the 3D map while it is built, with a live view. Setup, offline test, live run and every switch (`DYNAMIC_*` and `SEMANTIC=1` in `.env`): [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md).
+
+## 文件 / Documentation
+
+- [專案網頁 / Project page](https://gauravmeena1.github.io/kachaka_mapping/)
+- [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md): 動態物件遮罩操作指南 / Dynamic-masking guide
+- [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md): 實機問題 / Field issues
+- [`docs/FIELD_NOTES_2026.md`](docs/FIELD_NOTES_2026.md): 現場紀錄 / Field notes
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): 貢獻指南 / Contributing
 
 ## 提交前驗證 / Verification before commit
 
@@ -155,42 +214,9 @@ bash -n run_bridge_oneshot.sh preflight.sh preflight_legacy.sh arm_cam_tune.sh
 
 GitHub Actions 會執行相同的離線檢查。GitHub Actions runs the same offline checks. Hardware-affecting changes additionally require a supervised low-speed test.
 
-## GitHub 上傳 / Publish to GitHub
+## 致謝 / Credits
 
-先確認忽略規則，尤其不要加入 `.env`、地圖、pose logs、軌跡或 SLAM outputs。Check ignored files first; do not add `.env`, maps, pose logs, trajectories, or SLAM outputs.
-
-```bash
-cd /path/to/kachaka_mapping
-
-git status --short
-git check-ignore -v .env artifacts/ || true
-git diff --check
-
-git add .gitignore .env.example .github README.md CONTRIBUTING.md KNOWN_ISSUES.md \
-  docs requirements.txt requirements-optional.txt \
-  '*.py' '*.sh'
-git status --short
-git diff --cached --check
-
-# Review exactly what will be committed.
-git diff --cached --stat
-git diff --cached
-
-git commit -m "Prepare bilingual Kachaka mapping toolkit"
-git branch -M main
-git remote add origin git@github.com:<OWNER>/<REPOSITORY>.git
-git push -u origin main
-```
-
-若 `origin` 已存在 / If `origin` already exists:
-
-```bash
-git remote -v
-git remote set-url origin git@github.com:<OWNER>/<REPOSITORY>.git
-git push -u origin main
-```
-
-建議在 GitHub 建立空 repository，不要先自動加入 README、`.gitignore` 或 LICENSE，避免第一次 push 前產生不必要的 history conflict。Create an empty GitHub repository without generated starter files to avoid an unnecessary first-push history conflict.
+建圖路線工具來自 [h44343880/kachaka_mapping](https://github.com/h44343880/kachaka_mapping)；動態物件遮罩與 SLAM 整合由 Gaurav 開發。The mapping route toolkit comes from [h44343880/kachaka_mapping](https://github.com/h44343880/kachaka_mapping); dynamic-object masking and the SLAM integration are by Gaurav.
 
 ## License
 
