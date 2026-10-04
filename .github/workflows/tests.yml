@@ -16,4 +16,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s . -p 'test_*.py' -v
       - run: python -m compileall -q .
-      - run: bash -n run_bridge_oneshot.sh preflight.sh preflight_charles.sh arm_cam_tune.sh
+      - run: bash -n run_bridge_oneshot.sh preflight.sh preflight_legacy.sh arm_cam_tune.sh
