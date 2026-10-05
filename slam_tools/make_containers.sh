@@ -7,7 +7,7 @@
 #   KACHAKA_AI_CONTAINER / KACHAKA_AI_IMAGE           SLAM server + masking (GPU)
 #   KACHAKA_SLAM_CONTAINER / KACHAKA_GATEWAY_IMAGE    RealSense -> ROS 2 gateway
 #   KACHAKA_TOOLS_DIR      host workspace, mounted at /fungi in both
-#   KACHAKA_CODE_DIR       host folder holding ma-long-server/ and kachaka_mapping/, mounted at
+#   KACHAKA_CODE_DIR       host folder holding ma-long-server/ and this repo (dynamic_SLAM/), mounted at
 #                          KACHAKA_CODE_DIR_CT in the AI container
 #   KACHAKA_WEIGHTS_DIR    host ma-long tree that holds src/weights and vendor/weights (read-only)
 #

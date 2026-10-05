@@ -1,8 +1,10 @@
-# Kachaka 3D SLAM Automatic Mapping
+# dynamic_SLAM
+
+Automatic 3D mapping with a Kachaka robot, with people and moving objects removed from the map.
 
 This repository runs automatic 3D mapping with a Kachaka robot. It plans a coverage route on the Kachaka 2D map, drives it, and records RGB-D video for a 3D SLAM server. While the map is built, the server removes people and moving objects. The 3D map is then aligned to the robot's 2D map.
 
-Project page: <https://gauravmeena1.github.io/kachaka_mapping/>
+Project page: <https://gauravmeena1.github.io/dynamic_SLAM/>
 
 > **Safety:** The full workflow moves the robot, and some camera-tuning commands move the arm. Run the offline tests and `--plan-only` first. A trained operator must stay within reach of the emergency stop during hardware runs.
 
@@ -39,8 +41,8 @@ Generated files go to `artifacts/`, which is ignored by Git. Model weights are n
 Requirements: Python 3.10+.
 
 ```bash
-git clone https://github.com/Gauravmeena1/kachaka_mapping.git
-cd kachaka_mapping
+git clone https://github.com/Gauravmeena1/dynamic_SLAM.git
+cd dynamic_SLAM
 
 python3 -m venv .venv
 source .venv/bin/activate

@@ -54,9 +54,9 @@ except Exception:                      # pragma: no cover
 
 from ma_slam.solver import MaSlam
 
-# The masker lives in kachaka_mapping/dynamic_masking/.  This file is installed into the SLAM server
+# The masker lives in <repo>/dynamic_masking/.  This file is installed into the SLAM server
 # (src/ma_slam/fusion_solver.py) as a symlink by slam_integration/install.sh, so its real location
-# is kachaka_mapping/slam_integration/ and the masker is found next to it.  DYNAMIC_MASK_ROOT overrides.
+# is <repo>/slam_integration/ and the masker is found next to it.  DYNAMIC_MASK_ROOT overrides.
 DYNAMIC_ROOT = os.environ.get(
     "DYNAMIC_MASK_ROOT",
     os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "dynamic_masking"))
