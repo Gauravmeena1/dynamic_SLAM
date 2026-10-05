@@ -1,6 +1,6 @@
 # 動態物件遮罩 + 即時 3D SLAM / Dynamic-object masking with live 3D SLAM
 
-Branch `gaurav/dynamic-masking` · Gaurav · 2026-09-28, updated 2026-10-05
+Gaurav · 2026-09-28, updated 2026-10-05
 
 這個分支把 Gaurav 的動態物件遮罩方法接進即時 3D SLAM：人一律移除；其他可移動物件（筆電、背包、瓶子…）只有在移動或被拿著時才移除，靜止的物件保留在地圖中。
 This branch adds Gaurav's dynamic-object masking to the live 3D SLAM run by `run_bridge_oneshot.sh`. People are always removed. Other movable objects (laptop, bag, bottle…) are removed only while they move or are carried; static objects stay in the map. Masked pixels never become map points.
@@ -52,9 +52,8 @@ Assumes the team's lab machine: Docker, the SLAM image (`slam_node:malong`), the
 
 ```bash
 # 1. get the branch
-git clone https://github.com/Gauravmeena1/kachaka_mapping.git
-cd kachaka_mapping
-git switch gaurav/dynamic-masking
+git clone https://github.com/Gauravmeena1/dynamic_SLAM.git
+cd dynamic_SLAM
 
 # 2. settings: copy and edit every value (robot IP, camera serial, paths, container names)
 cp .env.example .env
@@ -69,7 +68,7 @@ nano .env
 | `KACHAKA_SLAM_CONTAINER` | Camera → ROS 2 gateway container |
 | `KACHAKA_AI_CONTAINER` | SLAM server + masking container (GPU) |
 | `KACHAKA_SERVER_DIR_CT` | SLAM server repo path **inside** the AI container |
-| `KACHAKA_CODE_DIR` / `KACHAKA_CODE_DIR_CT` | Host folder that holds both `ma-long-server/` and `kachaka_mapping/`, and its path in the container. Both repos must sit side by side in it (the installed link is relative). |
+| `KACHAKA_CODE_DIR` / `KACHAKA_CODE_DIR_CT` | Host folder that holds both `ma-long-server/` and `dynamic_SLAM/`, and its path in the container. Both repos must sit side by side in it (the installed link is relative). |
 | `KACHAKA_WEIGHTS_DIR` | ma-long tree with `src/weights` and `vendor/weights` |
 | `KACHAKA_AI_IMAGE` / `KACHAKA_GATEWAY_IMAGE` | Images used by `make_containers.sh` |
 | `KACHAKA_CAMERA_SERIAL` | RealSense used for mapping |
@@ -98,14 +97,14 @@ slam_tools/make_containers.sh
 
 Check: `slam_integration/install.sh` prints four ✓ lines; `make_containers.sh` prints the mounts.
 
-**Every new terminal:** run `cd kachaka_mapping && set -a && . ./.env && set +a` first, so `$KACHAKA_…` values below are defined.
+**Every new terminal:** run `cd dynamic_SLAM && set -a && . ./.env && set +a` first, so `$KACHAKA_…` values below are defined.
 
 ---
 
 ## 3. 每次開機後 / After every reboot
 
 ```bash
-cd kachaka_mapping && set -a && . ./.env && set +a
+cd dynamic_SLAM && set -a && . ./.env && set +a
 docker start "$KACHAKA_AI_CONTAINER" "$KACHAKA_SLAM_CONTAINER"
 PY=$KACHAKA_PYTHON
 
@@ -132,7 +131,7 @@ python3 slam_tools/replay_ab.py mapping_20260922_01 offline_test1
 
 # bird's-eye view: before | after | removed in red
 docker exec "$KACHAKA_AI_CONTAINER" \
-  python "$KACHAKA_CODE_DIR_CT/kachaka_mapping/slam_tools/bev_compare.py" /fungi/outputs_malong/offline_test1
+  python "$KACHAKA_CODE_DIR_CT/dynamic_SLAM/slam_tools/bev_compare.py" /fungi/outputs_malong/offline_test1
 ```
 
 Expected on `mapping_20260922_01` (389 frames): mean removed ≈ 2.2 % per frame, motion-only ≈ 0.1 %.
