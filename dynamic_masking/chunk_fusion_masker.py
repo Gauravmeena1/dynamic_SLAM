@@ -71,7 +71,7 @@ class ChunkFusionMasker:
                  person_dilate_px: int = 0, carried_rule: str = "touch", carried_motion_thr: float = 0.15,
                  person_box_fill: bool = False, box_fill_margin_m: float = 0.25, box_fill_expand: float = 0.05,
                  bridge_max_gap: int = 1, box_fill_down: float = 0.0, edge_ring_px: int = 0,
-                 edge_jump_m: float = 0.10):
+                 edge_jump_m: float = 0.10, held_frac: float = 0.7, held_depth_m: float = 0.25):
         """Static-furniture gates (2026-09-04, §12).  DEFAULTS SINCE §12.1 (2026-09-08) are the
         "g_two_s5_grow" combination: geo_two_sided=True + two_sided_strong_factor=5.0 + grow_carried=True,
         with conf_gate_pct left OFF.  Chosen over plain two-sided/conf gating because it is the only
@@ -103,9 +103,17 @@ class ChunkFusionMasker:
         # (behaviour up to now; a still suitcase next to a still person is removed);
         # "touch_and_moving" = it must also move itself: >= carried_motion_thr of its valid pixels above
         # the frame's motion threshold (lower than motion_thr, because carried objects move slowly).
-        if carried_rule not in ("touch", "touch_and_moving"):
-            raise ValueError(f"carried_rule must be 'touch' or 'touch_and_moving', got {carried_rule!r}")
+        # "touch_and_moving_or_held" (2026-10-05): touching AND (moving OR held), held = at least
+        # held_frac of the object lies inside the convex hull of a person's YOLO mask (dilated by
+        # attach_px) AND its median depth is within held_depth_m of the person pixels around it.
+        # A phone held still in the hand moves too little for the motion test but sits inside the
+        # hand/arm outline at the hand's depth (0922: hull 1.00, 8-21 cm); a bottle on the table in
+        # front of a sitting person is inside the hull but 30 cm-1 m closer; a suitcase, laptop or
+        # mouse beside a person is mostly outside the hull (<= 0.52).
+        if carried_rule not in ("touch", "touch_and_moving", "touch_and_moving_or_held"):
+            raise ValueError(f"carried_rule must be 'touch', 'touch_and_moving' or 'touch_and_moving_or_held', got {carried_rule!r}")
         self.carried_rule = carried_rule; self.carried_motion_thr = float(carried_motion_thr)
+        self.held_frac = float(held_frac); self.held_depth_m = float(held_depth_m)
         # person_box_fill (2026-10-01): YOLO's person MASK stops at an occluder (legs behind a stool),
         # but its detection BOX still spans the whole person. Inside the box (expanded by
         # box_fill_expand of its size), pixels whose depth lies in the person's depth band
@@ -291,19 +299,40 @@ class ChunkFusionMasker:
         if use_instances:
             for k in range(T):
                 pdil = _dilate(sem_person[k], self.attach_px) if sem_person[k].any() else None
+                hulls = []                                  # per person instance (raw YOLO mask)
+                if self.carried_rule == "touch_and_moving_or_held":
+                    for d in inst[k]:
+                        if d["cls"] != 0 or not d["mask"].any():
+                            continue
+                        cnts, _ = cv2.findContours(d["mask"].astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        hm = np.zeros((H, W), np.uint8)
+                        cv2.fillPoly(hm, [cv2.convexHull(np.concatenate(cnts))], 1)
+                        hulls.append(_dilate(hm > 0, self.attach_px))
                 for d in inst[k]:
                     if d["cls"] == 0:
                         continue
-                    o = dict(name=d["name"], conf=d["conf"], area=int(d["mask"].sum()), motion_frac=None, attached=False)
+                    o = dict(name=d["name"], conf=d["conf"], area=int(d["mask"].sum()), motion_frac=None, attached=False, held_frac=None)
                     o["attached"] = bool(pdil is not None and (d["mask"] & pdil).any())
                     if gres[k] is not None and not gres[k]["info"].get("skipped"):
                         sel = d["mask"] & gres[k]["valid"]
                         if int(sel.sum()) >= self.min_valid_px:
                             o["motion_frac"] = float((gres[k]["residual"][sel] > gres[k]["info"]["threshold_px"]).mean())
                     o["moving"] = bool(o["motion_frac"] is not None and o["motion_frac"] >= self.motion_thr)
-                    if self.carried_rule == "touch_and_moving":
+                    if self.carried_rule in ("touch_and_moving", "touch_and_moving_or_held"):
                         o["carried"] = bool(o["attached"] and o["motion_frac"] is not None
                                             and o["motion_frac"] >= self.carried_motion_thr)
+                        if self.carried_rule == "touch_and_moving_or_held" and o["attached"] and hulls and o["area"]:
+                            o["held_frac"] = max(float((d["mask"] & h).sum()) / o["area"] for h in hulls)
+                            # diagnostics: share inside the dilated person MASK, and depth gap to the
+                            # person pixels within 30 px of the object
+                            o["near_frac"] = float((d["mask"] & pdil).sum()) / o["area"]
+                            ring = _dilate(d["mask"], 30) & ~d["mask"] & sem_person[k] & ~person_fill[k] & (dep[k] > 0)
+                            om = d["mask"] & (dep[k] > 0)
+                            if ring.sum() >= 20 and om.sum() >= 20:
+                                o["depth_gap"] = float(np.median(dep[k][om]) - np.median(dep[k][ring]))
+                            held = o["held_frac"] >= self.held_frac and o.get("depth_gap") is not None \
+                                and abs(o["depth_gap"]) <= self.held_depth_m
+                            o["carried"] = o["carried"] or held
                     else:
                         o["carried"] = o["attached"]
                     o["own"] = o["carried"] or o["moving"]; o["mask"] = d["mask"]
@@ -328,6 +357,12 @@ class ChunkFusionMasker:
                     o["removed"] = (sum(votes) * 2 > len(votes)) if len(votes) != 2 else o["own"]   # tie -> own
             for k in range(T):
                 rm = [o["mask"] for o in objects[k] if o["removed"]]
+                # box fill must not swallow an object judged static (suitcase beside a person):
+                # its pixels added by the fill are given back
+                kp = [o["mask"] for o in objects[k] if not o["removed"]]
+                if kp and person_fill[k].any():
+                    back = person_fill[k] & np.any(kp, axis=0)
+                    sem_person[k] &= ~back; person_fill[k] &= ~back
                 sem[k] = sem_person[k] | (_clean(np.any(rm, axis=0)) if rm else False)
             for k in range(T):
                 for o in objects[k]: o.pop("mask", None)

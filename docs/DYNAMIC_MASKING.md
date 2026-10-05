@@ -40,9 +40,10 @@ All of this is on by default. Switches: put them in `.env` (every `slam_tools` s
 | `DYNAMIC_BOX_FILL_DOWN` | `0.6` | `0` |
 | `DYNAMIC_EDGE_RING_PX` | `12` | `0` |
 | `DYNAMIC_CARVE` | `1` | `0` |
+| `DYNAMIC_CARRIED_RULE` | `touch` | `touch` — `touch_and_moving_or_held` (2026-10-05) removes an object next to a person only if it moves or is held in the hand, so a still suitcase or bottle beside someone stays |
 | `SEMANTIC` | unset (`--no_deploy`) | — set `1` for semantic instances + deploy files (~20 GB more GPU memory) |
 
-Trade-off: when a person leans on a stool or box, the per-frame mask also covers that object; it stays in the map through the other views.
+Trade-off: when a person leans on a stool or box, the per-frame mask also covers that object; it stays in the map through the other views. Since 2026-10-05 the box fill gives back pixels of an object judged static, so carving no longer deletes a suitcase standing beside a person. A second recording on a running server also no longer crashes (the loop-retrieval database is cleared per session).
 
 ---
 

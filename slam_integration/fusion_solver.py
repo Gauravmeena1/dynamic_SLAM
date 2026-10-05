@@ -148,6 +148,9 @@ def build_masker(device: str = "cuda", **kw):
         bridge_max_gap=int(os.environ.get("DYNAMIC_BRIDGE_MAX_GAP", "3")),
         box_fill_down=float(os.environ.get("DYNAMIC_BOX_FILL_DOWN", "0.6")),
         edge_ring_px=int(os.environ.get("DYNAMIC_EDGE_RING_PX", "12")),
+        # improvement #2 (2026-10-05): touch (default, unchanged) / touch_and_moving /
+        # touch_and_moving_or_held (= moving OR held in the hand; keeps still objects beside people)
+        carried_rule=os.environ.get("DYNAMIC_CARRIED_RULE", "touch"),
     )
     params.update(kw)
     return ChunkFusionMasker(**params)
@@ -178,6 +181,14 @@ class FusionMaSlam(MaSlam):
 
     # ------------------------------------------------------------------ run
     def process_submap(self, image_paths, depth_paths):
+        # The server keeps one SALAD retrieval object resident across sessions (server_api.py:152)
+        # and never empties its database, so the 2nd session on a running server matched against the
+        # previous recording's submap ids -> KeyError in _add_loop_constraint. Start each session
+        # (first submap) with an empty database. (2026-10-05)
+        r = getattr(self, "retrieval", None)
+        if self.stats.get("n_submaps", 0) == 0 and r is not None and getattr(r, "_descs", None):
+            print(f"[fusion] clearing {len(r._descs)} loop-retrieval entries left from a previous session")
+            r._descs.clear(); r._meta.clear()
         out = self._infer(image_paths, depth_paths)            # solver.py:327
 
         # ---------------- dynamic masking, in the 327 -> 329 gap ----------------
