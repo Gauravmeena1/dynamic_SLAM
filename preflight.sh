@@ -96,7 +96,7 @@ echo "── 4. 磁碟 ───────────────────
 free_gb=$(df -BG --output=avail "$TOOLS" | tail -1 | tr -dc '0-9')
 if [ "${free_gb:-0}" -ge 50 ]; then ok "可用 ${free_gb}G"
 elif [ "${free_gb:-0}" -ge 30 ]; then warn "只剩 ${free_gb}G（腳本門檻 30G，一趟吃數 GB）"
-else bad "只剩 ${free_gb}G，低於門檻 30G"; fix "清 $TOOLS/outputs_malong 裡不要的 run"; fi
+else bad "只剩 ${free_gb}G，低於門檻 30G"; fix "清 $TOOLS/${KACHAKA_OUTPUT_SUBDIR:-outputs_malong} 裡不要的 run"; fi
 
 echo "── 5. container ───────────────────────────────────────"
 for c in "${KACHAKA_AI_CONTAINER:-zealous_agnesi}" "$GW"; do
@@ -200,7 +200,7 @@ fi
 
 if [ -n "$NAME" ]; then
     echo "── 10. run 名衝突 ────────────────────────────────────"
-    d="$TOOLS/outputs_malong/$NAME"
+    d="$TOOLS/${KACHAKA_OUTPUT_SUBDIR:-outputs_malong}/$NAME"
     n=$(ls -1 "$d/deploy" 2>/dev/null | wc -l)
     if [ "$n" -ge 1 ]; then
         bad "$d 已經有 $n 個 deploy 檔 —— 重跑同名會覆蓋掉那趟資料（-y 不會問你）"

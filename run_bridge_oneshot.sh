@@ -31,6 +31,8 @@ ROBOT_ENV="${KACHAKA_ROBOT_ENV_FILE:-/opt/kachaka/robotic/.env}"
 OUTPUT_DIR="$(resolve_from_work "${KACHAKA_OUTPUT_DIR:-artifacts/runs}")"
 PREVIEW_DIR="$(resolve_from_work "${KACHAKA_PREVIEW_DIR:-artifacts/previews}")"
 SESSION=bridge_oneshot
+# 3D 產物子資料夾（$TOOLS 底下，container 內為 /fungi/<subdir>）/ 3D output subfolder under $TOOLS
+OUT_SUB="${KACHAKA_OUTPUT_SUBDIR:-outputs_malong}"
 KACHAKA_DEFAULT="${KACHAKA_ENDPOINT:-KACHAKA_IP:26400}"
 API="${KACHAKA_AI_API_URL:-http://localhost:3636}"
 
@@ -309,7 +311,7 @@ tmux kill-session -t "$SESSION" 2>/dev/null
 tmux new-session -d -s "$SESSION" -n collect
 SLAM_OWNED=1
 tmux send-keys -t "$SESSION:collect" \
-    "cd $TOOLS && $SLAM_SH manual --name $NAME -y" C-m
+    "cd $TOOLS && $SLAM_SH manual --name $NAME -y --out file:///fungi/$OUT_SUB/$NAME" C-m
 
 echo "  ${C_DIM}冷啟動要載權重、開相機，數分鐘正常。畫面：tmux attach -t $SESSION${C_R}"
 # ⚠️ 不要用 `tmux capture-pane | grep 畫面字串` 判斷（2026-08-26 實測失敗，整趟報廢）：
@@ -346,7 +348,7 @@ tmux send-keys -t "$SESSION:collect" "" C-m
 SLAM_OWNED=0
 echo "  ${C_DIM}收尾要 flush → 語意匯出 → deploy，1–2 分鐘。別中斷。${C_R}"
 # 收尾完成一樣不看畫面：deploy 產物齊了（15 檔）或 collect 視窗自己結束，才算完成。
-DEPLOY_DIR="$TOOLS/outputs_malong/$NAME/deploy"
+DEPLOY_DIR="$TOOLS/$OUT_SUB/$NAME/deploy"
 t0=$SECONDS
 while true; do
     nd=$(ls -1 "$DEPLOY_DIR" 2>/dev/null | wc -l)
@@ -361,13 +363,13 @@ stop_logger; ok "已停 pose2d logger（含 keepalive 的子程序）"
 # ══════════════════════════════════════════════════════════════════════
 step "7/7 Alignment"
 # ══════════════════════════════════════════════════════════════════════
-RUN_DIR="$TOOLS/outputs_malong/$NAME"
+RUN_DIR="$TOOLS/$OUT_SUB/$NAME"
 [ -d "$RUN_DIR" ] || die "找不到 $RUN_DIR —— 收集那段是不是失敗了？"
 ok "橋 run 產物 $RUN_DIR（$(ls "$RUN_DIR/deploy" 2>/dev/null | wc -l)/15 deploy 檔）"
 
 ALIGN_CMD="$TOOLS/align.sh $NAME $DATE $VENUE"
 REG_CMD="conda run -n dualmap python register_runs.py \\
-    outputs_malong/${OLD_RUN:-<舊 run>} outputs_malong/$NAME \\
+    $OUT_SUB/${OLD_RUN:-<舊 run>} $OUT_SUB/$NAME \\
     --out $OUTPUT_DIR/align_bridge_${DATE}/T_old_to_bridge.json"
 
 if [ "$DO_ALIGN" = 1 ]; then
@@ -396,7 +398,7 @@ fi
 cat <<EOF
 
   這趟的東西：
-    3D    $TOOLS/outputs_malong/$NAME
+    3D    $TOOLS/$OUT_SUB/$NAME
     pose2d $POSE_LOG
     路徑   $TRAJ / $GOALS
     圖     $PREVIEW_DIR/preview_goals_${NAME}.png

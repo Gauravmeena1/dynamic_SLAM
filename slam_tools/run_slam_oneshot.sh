@@ -47,7 +47,7 @@ usage() {
 
 Options:
   --name NAME          run name (default run_YYYYmmdd_HHMMSS, also sets the output dir and deploy filenames)
-  --out  URI           output location (default file:///fungi/outputs_malong/<name>)
+  --out  URI           output location (default file:///fungi/$KACHAKA_OUTPUT_SUBDIR/<name>, outputs_malong if unset)
   --duration SEC       manual mode collection duration in seconds (default 120)
   --root DIR           folder mode's source directory (default /fungi/test_run_EDB1/rgb)
   --rate N             folder mode replay fps (default 1.0, close to live-robot pace)
@@ -100,7 +100,7 @@ if [ "$SLAM_BACKEND" = "da3" ] && [[ "$SLAM_MODE" == *depth* ]]; then
 fi
 
 [ -z "$RUN_NAME" ] && RUN_NAME="run_$(date +%Y%m%d_%H%M%S)"
-[ -z "$OUT_URI" ]  && OUT_URI="file:///fungi/outputs_malong/${RUN_NAME}"
+[ -z "$OUT_URI" ]  && OUT_URI="file:///fungi/${KACHAKA_OUTPUT_SUBDIR:-outputs_malong}/${RUN_NAME}"
 OUT_DIR_CT="${OUT_URI#file://}"                       # path inside the container
 OUT_DIR_HOST="${OUT_DIR_CT/\/fungi/$FUNGI_HOST}"      # corresponding host path
 
