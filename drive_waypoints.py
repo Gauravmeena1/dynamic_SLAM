@@ -93,6 +93,14 @@ def thin(pts, min_step, goal_spacing, flat_turn=0.09, max_yaw_step_deg=70.0):
             continue
         keep.append(i)
     keep.append(picked[-1])
+    # 直線段只比 min_step 長一點時，最後一個中繼點會離終點只有幾公分（Z 字末段實測 0.05 m）→
+    # 相鄰目標過近被拒跑。同一直線上又近於 goal_spacing 的話，併進終點。
+    if len(keep) >= 3:
+        i, j = keep[-2], keep[-1]
+        d = math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1])
+        turned = abs((tan[j] - tan[i] + math.pi) % (2 * math.pi) - math.pi)
+        if d < goal_spacing and turned < flat_turn:
+            keep.pop(-2)
 
     # min_step can otherwise skip across an entire rounded turn. Restore just
     # enough raw-path points to bound every commanded final-yaw change.

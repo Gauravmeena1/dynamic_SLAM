@@ -366,6 +366,115 @@ def densify(pts, step):
     return dense
 
 
+def zigzag_path(comp, g, sx, sy, syaw, angle_deg, go_back):
+    """沿可走區域的長軸走 Z 字形，回 [(x,y),...]（第一點是起點）或 None。
+
+    走直線時相機只看得到正前方，兩側的牆與家具幾乎沒入鏡；Z 字形讓機頭輪流偏向兩側
+    （±angle_deg），每一段仍是直線，比螺旋少很多原地修正 —— 載著手臂架時修正最容易卡。
+    go_back=True 時走到底後沿中線直線走回起點附近，補上反方向的視角。
+    """
+    rows, cols = np.nonzero(comp)
+    if len(rows) < 2:
+        return None
+    xy = np.array([g.rc_to_world(r, c) for r, c in zip(rows, cols)])
+    center = xy.mean(axis=0)
+    # 長軸 = 主成分；走廊斜放在地圖上也能用
+    _, vecs = np.linalg.eigh(np.cov((xy - center).T))
+    u = vecs[:, 1]
+    v = np.array([-u[1], u[0]])
+    su, sv = (xy - center) @ u, (xy - center) @ v
+    to_xy = lambda s, t: tuple(center + s * u + t * v)
+
+    s0 = float((np.array([sx, sy]) - center) @ u)
+    t0 = float((np.array([sx, sy]) - center) @ v)
+    lo, hi = float(su.min()), float(su.max())
+    # 往較遠的那一端走；兩端差不多遠時，選跟機頭朝向一致的方向，免得一開始就掉頭
+    heading = math.cos(syaw) * u[0] + math.sin(syaw) * u[1]
+    sign = 1.0 if (hi - s0) - (s0 - lo) > 0.5 or ((abs((hi - s0) - (s0 - lo)) <= 0.5) and heading >= 0) else -1.0
+    end = hi if sign > 0 else lo
+
+    band = g.res * 1.5
+
+    def lateral(s):
+        m = np.abs(su - s) < band
+        return (float(sv[m].min()), float(sv[m].max())) if m.any() else None
+
+    tan_a = math.tan(math.radians(angle_deg))
+    pts = [(sx, sy)]
+    s, t = s0, t0
+    side = 1.0 if t0 <= 0 else -1.0          # 先往離自己較遠的那一側偏
+    while sign * (end - s) > g.res * 2:
+        cur = lateral(s)
+        if cur is None:
+            break
+        target = cur[1] if side > 0 else cur[0]
+        ds = abs(target - t) / tan_a
+        ns = s + sign * max(ds, 0.3)
+        if sign * (end - ns) < 0.4:
+            ns = end                         # 剩不到 0.4 m 就併進這一段，免得最後多出幾公分的一小段（目標太近被拒跑）
+        # 末端的安全區是圓角、很窄，連線可能過不去：每次往回收 0.1 m 再試，別整條路徑在這裡提早結束
+        # （2026-09-29 實測：直接 break 讓 Z 字停在 2.34 m，走廊只走了 2/3）
+        placed = False
+        while not placed and sign * (ns - s) >= 0.3:
+            nxt = lateral(ns)
+            if nxt is not None:
+                mid = (nxt[0] + nxt[1]) / 2
+                nt = nxt[1] if side > 0 else nxt[0]
+                if go_back and ns == end:
+                    nt = mid                 # 要回程時最後一段收在末端中線，掉頭才分得成兩次轉向
+                # 貼邊的那一點若連線不安全，就往中線收，最後退回中線
+                for frac in (1.0, 0.75, 0.5, 0.25, 0.0):
+                    cand = mid + (nt - mid) * frac
+                    if seg_safe(comp, g, pts[-1], to_xy(ns, cand)):
+                        pts.append(to_xy(ns, cand))
+                        s, t = ns, cand
+                        placed = True
+                        break
+            if not placed:
+                ns -= sign * 0.1
+        if not placed:
+            break
+        side = -side
+    if len(pts) < 2:
+        return None
+
+    if go_back:
+        # 掉頭拆成兩次各 ≤ ~130° 的轉向（drive_waypoints 預設拒絕 > 145° 的單步跳變，
+        # 載著手臂架原地掉頭也最容易卡）：先斜退到來向的另一側，再切回中線往回走。
+        came_from = (np.array(pts[-2]) - center) @ v if len(pts) >= 2 else t
+        turn = []
+        lr = lateral(s - sign * 0.3)
+        if lr:
+            m = (lr[0] + lr[1]) / 2
+            edge = lr[0] if came_from > m else lr[1]
+            turn.append(to_xy(s - sign * 0.3, m + (edge - m) * 0.8))
+        lr = lateral(s - sign * 0.9)
+        if lr:
+            turn.append(to_xy(s - sign * 0.9, (lr[0] + lr[1]) / 2))
+        for q in turn:
+            if seg_safe(comp, g, pts[-1], q):
+                pts.append(q)
+        mids = []
+        k = s - sign * 1.4          # 掉頭後沿中線每 0.5 m 一點走回起點
+        while sign * (k - s0) > 0.3:        # 最後一段至少 0.3 m，否則導航目標太近被拒跑
+            lr = lateral(k)
+            if lr:
+                mids.append(to_xy(k, (lr[0] + lr[1]) / 2))
+            k -= sign * 0.5
+        lr = lateral(s0)
+        if lr:
+            mids.append(to_xy(s0, (lr[0] + lr[1]) / 2))
+        for q in mids:
+            if seg_safe(comp, g, pts[-1], q):
+                pts.append(q)
+            else:
+                leg = bfs_path(comp, g.world_to_rc(*pts[-1]), g.world_to_rc(*q))
+                if leg is None:
+                    continue
+                pts += shortcut([g.rc_to_world(r, c) for r, c in leg], comp, g)[1:]
+    return pts
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
                                  description="從 Kachaka 2D map 產生覆蓋路徑 / Generate a coverage trajectory from a Kachaka 2D map.",
@@ -381,9 +490,15 @@ def main() -> int:
                          "螺旋路徑貼著 0.35 m 邊界走，會被 0.40 m 的檢查砍掉一半目標、路徑斷成碎片")
     ap.add_argument("--spacing", type=float, default=0.7, help="掃描線間距 / Sweep-line spacing in metres (default: 0.7)")
     ap.add_argument("--step", type=float, default=0.05, help="Waypoint 間距 / Dense waypoint step in metres (default: 0.05)")
-    ap.add_argument("--pattern", choices=("spiral", "boustrophedon"), default="spiral",
+    ap.add_argument("--pattern", choices=("spiral", "boustrophedon", "zigzag"), default="spiral",
                     help="覆蓋圖形 / Coverage pattern: spiral avoids 180-degree reversals; "
-                         "boustrophedon gives regular sweep rows")
+                         "boustrophedon gives regular sweep rows; zigzag weaves along the long axis "
+                         "so the camera sees both sides of a corridor")
+    ap.add_argument("--zigzag-angle", type=float, default=40.0,
+                    help="Z 字偏角 / Zigzag heading offset from the long axis in degrees (default: 40)")
+    ap.add_argument("--zigzag-return", action="store_true",
+                    help="Z 字走到底後掉頭沿中線走回 / After the zigzag, turn around and drive back along the "
+                         "centre line (the turn-around needs 120-150 degree turns; risky while carrying a shelf)")
     ap.add_argument("--turn-radius", type=float, default=0.40,
                     help="迴轉半徑 / Turn radius in metres (default: 0.40); larger is smoother but uses more space")
     ap.add_argument("--no-skip-rows", dest="skip_rows", action="store_false",
@@ -462,6 +577,16 @@ def main() -> int:
             pts += ordered
         print(f"等高線 {len(rings)} 圈（螺旋，無 180° 反向）")
         return finish(args, g, comp, pts, sx, sy, syaw)
+
+    if args.pattern == "zigzag":
+        pts = zigzag_path(comp, g, sx, sy, syaw, args.zigzag_angle, args.zigzag_return)
+        if not pts:
+            return err("產生不出 Z 字路徑 —— 可走區域太窄或太短")
+        print(f"Z 字 ±{args.zigzag_angle:.0f}°，{len(pts) - 1} 段"
+              f"{'，走到底後沿中線返回' if args.zigzag_return else ''}")
+        # 不做圓角：走廊只有 ~0.75 m 寬，末端掉頭的圓弧會被壓成急彎，抽稀後兩個目標只隔十幾公分被拒跑。
+        # 尖角處交給 move_to_pose 自己轉向。
+        return finish(args, g, comp, pts, sx, sy, syaw, round_corners=False)
 
     sweeps = build_sweeps(comp, g, args.spacing)
     if not sweeps:
@@ -567,10 +692,18 @@ def main() -> int:
     return finish(args, g, comp, pts, sx, sy, syaw)
 
 
-def finish(args, g, comp, pts, sx, sy, syaw):
+def finish(args, g, comp, pts, sx, sy, syaw, round_corners=True):
     """共用收尾：圓角 → 加密 → 寫檔 → 出預覽圖。"""
     R = args.turn_radius
-    pts, n_round = round_path(pts, R, comp, g)
+    # 去掉幾乎重合（< 1 cm）的相鄰點（螺旋入口常離起點只有幾 mm），否則 drive_waypoints 會因目標間距過短拒跑
+    kept = pts[:1]
+    for p in pts[1:]:
+        if math.hypot(p[0] - kept[-1][0], p[1] - kept[-1][1]) >= 0.01:
+            kept.append(p)
+    pts = kept
+    n_round = 0
+    if round_corners:
+        pts, n_round = round_path(pts, R, comp, g)
     if n_round:
         print(f"圓角處理 {n_round} 個轉折點（半徑 {R} m）")
 
