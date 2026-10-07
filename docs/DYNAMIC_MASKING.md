@@ -1,6 +1,6 @@
 # 動態物件遮罩 + 即時 3D SLAM / Dynamic-object masking with live 3D SLAM
 
-Gaurav · 2026-09-28, updated 2026-10-05
+Gaurav · 2026-09-28, updated 2026-10-08
 
 這個分支把 Gaurav 的動態物件遮罩方法接進即時 3D SLAM：人一律移除；其他可移動物件（筆電、背包、瓶子…）只有在移動或被拿著時才移除，靜止的物件保留在地圖中。
 This branch adds Gaurav's dynamic-object masking to the live 3D SLAM run by `run_bridge_oneshot.sh`. People are always removed. Other movable objects (laptop, bag, bottle…) are removed only while they move or are carried; static objects stay in the map. Masked pixels never become map points.
@@ -26,24 +26,37 @@ Per chunk of 16 frames:
 1. **Semantic (YOLOv9e-seg):** person confidence ≥ 0.15 (others ≥ 0.25). A person is always removed. Any other movable-class object is removed only if it is **moving** (≥ 30 % of its pixels have a flow residual above the frame threshold) or **carried** (touches a person, 10 px).
 2. **Motion (FlowSeek optical flow vs. camera-pose flow):** adaptive threshold `median + 3·MAD`, checked against both neighbour frames. **Geo gate (new, default `anchor`):** a motion blob is kept only if it touches a movable-class detection (30 px). On the 22 Sept lab capture this cut person-free frames with more than 1 % removed from 59/296 to 1/296, with the people removal unchanged. Trade-off: an object YOLO cannot label is no longer removed by motion alone. `DYNAMIC_GEO_GATE=none` gives the old behaviour.
 3. **Bridge:** fills up to 3 frames without a YOLO detection when the same chunk has a detection before and after the gap (one side only is allowed for a person entering or leaving through the image border).
-4. **Person cleanup (2026-10-01):** person masks grow by 5 px; inside the person's detection box, pixels at the person's depth are added (legs behind a stool), and the box is extended 0.6 × its height downwards (legs under furniture); depth-jump ("flying") pixels within 12 px of the final mask are removed. The overlap frame shared by two submaps gets the later chunk's mask too.
-5. **3D carving (2026-10-01):** after the map is written, every point is projected into every frame. A point that frames only ever see on removed pixels (and on at most one kept pixel, its own) is dropped and saved to `carved_pcd.ply`. This removes points that other frames' predicted depth puts on a person, which no 2D mask can stop.
+4. **Person cleanup (since 2026-10-06, "v9"):** person masks grow by 5 px. The 1 Oct box fill is off: in live runs people stood against walls and glass, and the box rectangle swallowed the wall. Instead, **leg fill** adds pixels only below a person's outline, only when an occluder is in front, at lower-body depth, at least 10 cm behind the occluder and never on a detected object. Depth-jump ("flying") pixels within 8 px of a person are removed. The geo gate and carried growth are limited to 30 px around a person, and the bridge only fills at the source person's depth (±0.3 m).
+5. **Objects (since 2026-10-06):** an object judged static (a basket or suitcase next to someone) is protected; its pixels are never removed unless they lie inside the person's own YOLO mask. An object removed for motion must move against its surroundings and its 3D centre must move at least 10 cm.
+6. **3D carving:** after the map is written, every point is projected into every frame, now using the D435 sensor depth and the calibrated camera matrix. A point that frames only ever see on removed pixels is dropped and saved to `carved_pcd.ply`.
+7. **Outputs (since 2026-10-06):** `dynamic_pcd.ply` holds only depth-consistent core removals, and points that other frames see as static at the same 3D spot are dropped from it. `combined_fused.ply` is a TSDF-fused map (5 mm voxels), thinner than the stacked `combined_pcd.ply`.
 
-All of this is on by default. Switches: put them in `.env` (every `slam_tools` script loads it, also when `run_bridge_oneshot.sh` starts the server in tmux):
+Switches: put them in `.env`. Every `slam_tools` script loads it, also when `run_bridge_oneshot.sh` starts the server in tmux.
 
-| Variable | Default | Before 2026-10-01 |
+| Variable | Default | Meaning |
 |---|---|---|
-| `DYNAMIC_GEO_GATE` | `anchor` | `none` |
-| `DYNAMIC_PERSON_DILATE_PX` | `5` | `0` |
-| `DYNAMIC_PERSON_BOX_FILL` | `1` | `0` |
-| `DYNAMIC_BRIDGE_MAX_GAP` | `3` | `1` |
-| `DYNAMIC_BOX_FILL_DOWN` | `0.6` | `0` |
-| `DYNAMIC_EDGE_RING_PX` | `12` | `0` |
-| `DYNAMIC_CARVE` | `1` | `0` |
-| `DYNAMIC_CARRIED_RULE` | `touch` | `touch` — `touch_and_moving_or_held` (2026-10-05) removes an object next to a person only if it moves or is held in the hand, so a still suitcase or bottle beside someone stays |
-| `SEMANTIC` | unset (`--no_deploy`) | — set `1` for semantic instances + deploy files (~20 GB more GPU memory) |
+| `DYNAMIC_GEO_GATE` | `anchor` | `none` = the motion channel alone can remove |
+| `DYNAMIC_PERSON_DILATE_PX` | `5` | grow person masks; `0` = off |
+| `DYNAMIC_LEG_FILL` | `1` | leg fill below a person behind an occluder |
+| `DYNAMIC_PERSON_BOX_FILL` | `0` | the 1 Oct box fill (`1` = on; swallows walls next to people) |
+| `DYNAMIC_BOX_FILL_DOWN` | `0.3` | box-fill extension below the box (only with box fill on) |
+| `DYNAMIC_BRIDGE_MAX_GAP` | `3` | frames the bridge may fill |
+| `DYNAMIC_EDGE_RING_PX` | `8` | depth-edge ring around people; `0` = off |
+| `DYNAMIC_CARVE` | `1` | multi-view carving; `0` = off |
+| `DYNAMIC_CARRIED_RULE` | `touch` | `touch_and_moving_or_held` removes an object beside a person only if it moves or is held (used for the 6 Oct runs) |
+| `DYNAMIC_DUMP_MASKS` / `DYNAMIC_DUMP_RECON` | `0` | save per-channel masks (`mask_channels/`) / the reconstruction cache (`recon_cache/`) for offline analysis |
+| `MA_FORCE_INPUT_K` | `0` | rebuild points along the true camera rays (needs the matching SLAM-server change; small gain, left off) |
+| `SEMANTIC` | unset (`--no_deploy`) | `1` = semantic instances + deploy files (~20 GB more GPU memory) |
 
-Trade-off: when a person leans on a stool or box, the per-frame mask also covers that object; it stays in the map through the other views. Since 2026-10-05 the box fill gives back pixels of an object judged static, so carving no longer deletes a suitcase standing beside a person. A second recording on a running server also no longer crashes (the loop-retrieval database is cleared per session).
+Fixed in code (not forwarded by `run_t1_server.sh`): `DYNAMIC_CARVE_DEPTH=sensor`, `DYNAMIC_STATIC_EVIDENCE=1` (min 2 views), `DYNAMIC_FUSED_MAP=1`.
+
+### Version 2026-10-06 (branch `v3-2026-10-06`)
+
+Tested live on map `Map803_202610_06`, run `map803_1006_run2` (251 frames, 16/17 goals, 8 loops), with `SEMANTIC=1`, `DYNAMIC_CARRIED_RULE=touch_and_moving_or_held`, and mask and recon dumps on:
+- 85 % of removed pixels are people; the basket (0.1 %) and the suitcase (0.3 %) stay in the map.
+- Alignment PASS: `rmse_all` 0.104 m, scale 0.90.
+- Known issue: in blurred turning frames the bridge can still paste a person shape onto a static object (frames 35, 78, 108, 170).
+- Not fixed yet: `dynamic_object_mask.py` passes RGB to YOLO, which expects BGR. Swapping the channels lowered the run2 frames with a missed person from 11 to 3 in an offline test.
 
 ---
 

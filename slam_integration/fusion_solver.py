@@ -144,13 +144,14 @@ def build_masker(device: str = "cuda", **kw):
         # pixels within 12 px of the mask are removed (flying-pixel line). Set the env vars to
         # 0 / 0 / 1 / 0 / 0 for the behaviour before 2026-10-01.
         person_dilate_px=int(os.environ.get("DYNAMIC_PERSON_DILATE_PX", "5")),
-        person_box_fill=os.environ.get("DYNAMIC_PERSON_BOX_FILL", "1") == "1",
+        person_box_fill=os.environ.get("DYNAMIC_PERSON_BOX_FILL", "0") == "1",   # off since 2026-10-05: filled walls/desks
         bridge_max_gap=int(os.environ.get("DYNAMIC_BRIDGE_MAX_GAP", "3")),
-        box_fill_down=float(os.environ.get("DYNAMIC_BOX_FILL_DOWN", "0.6")),
-        edge_ring_px=int(os.environ.get("DYNAMIC_EDGE_RING_PX", "12")),
+        box_fill_down=float(os.environ.get("DYNAMIC_BOX_FILL_DOWN", "0.3")),
+        edge_ring_px=int(os.environ.get("DYNAMIC_EDGE_RING_PX", "8")),
         # improvement #2 (2026-10-05): touch (default, unchanged) / touch_and_moving /
         # touch_and_moving_or_held (= moving OR held in the hand; keeps still objects beside people)
         carried_rule=os.environ.get("DYNAMIC_CARRIED_RULE", "touch"),
+        leg_fill=os.environ.get("DYNAMIC_LEG_FILL", "1") == "1",
     )
     params.update(kw)
     return ChunkFusionMasker(**params)
@@ -169,11 +170,21 @@ class FusionMaSlam(MaSlam):
             _orig_write = self.map.write_points
 
             def _write_and_carve(graph, path, *a, **kw):
+                if os.environ.get("DYNAMIC_DUMP_RECON", "0") == "1":
+                    try:
+                        dump_recon_cache(self, graph, os.path.join(os.path.dirname(path), "recon_cache"))
+                    except Exception as exc:
+                        print(f"[fusion] WARNING: recon cache dump failed: {type(exc).__name__}: {exc}")
                 r = _orig_write(graph, path, *a, **kw)
                 try:
                     carve_dynamic_ply(self, graph, path)
                 except Exception as exc:                   # never lose the map over this
                     print(f"[fusion] WARNING: carving skipped: {type(exc).__name__}: {exc}")
+                if os.environ.get("DYNAMIC_FUSED_MAP", "1") == "1":
+                    try:
+                        export_fused_map(self, graph, os.path.dirname(path))
+                    except Exception as exc:
+                        print(f"[fusion] WARNING: fused map skipped: {type(exc).__name__}: {exc}")
                 return r
             self.map.write_points = _write_and_carve
         self.stats.setdefault("n_masked_submaps", 0)
@@ -194,6 +205,7 @@ class FusionMaSlam(MaSlam):
         # ---------------- dynamic masking, in the 327 -> 329 gap ----------------
         conf_mean: Optional[float] = None
         dyn_keep = None
+        dyn_core = None                                        # people / moving objects only (dynamic_pcd.ply)
         dyn_ch = None                                          # per-channel masks, display only
         conf_raw_keep = np.asarray(out["world_points_conf"], dtype=np.float32).copy()
         if self._masker is not None:
@@ -215,6 +227,24 @@ class FusionMaSlam(MaSlam):
                     mine = recs[-dyn.shape[0]:]
                     if len(mine) == dyn.shape[0] and all("sem" in r for r in mine):
                         dyn_ch = {k: np.stack([r[k] for r in mine]) for k in ("sem", "geo", "prop")}
+                        if all("ch_yolo_person" in r for r in mine):
+                            dyn_core = np.zeros_like(dyn)
+                            for kk in ("ch_yolo_person", "ch_person_fill", "ch_obj_removed", "ch_carried_grown", "prop", "geo"):
+                                dyn_core |= np.stack([r[kk] for r in mine])
+                            dyn_core = depth_consistent_core(dyn_core & dyn, np.asarray(out["depth"], np.float32))
+                        # per-channel masks to <run>/mask_channels/ for diagnosis (DYNAMIC_DUMP_MASKS=1)
+                        if os.environ.get("DYNAMIC_DUMP_MASKS", "0") == "1" and self.mask_viz_dir:
+                            try:
+                                d = os.path.join(os.path.dirname(self.mask_viz_dir), "mask_channels")
+                                os.makedirs(d, exist_ok=True)
+                                keys = [k for k in mine[0] if k.startswith("ch_")] + ["sem", "geo", "prop", "union"]
+                                np.savez_compressed(os.path.join(d, f"chunk_{self.stats['n_submaps']:04d}.npz"),
+                                                    image_paths=np.array(list(image_paths)), shape=np.array(dyn.shape),
+                                                    final=np.packbits(dyn),
+                                                    objects=np.array(__import__("json").dumps([r.get("objects") for r in mine], default=str)),
+                                                    **{k: np.packbits(np.stack([r[k] for r in mine])) for k in keys})
+                            except Exception as exc:
+                                print(f"[fusion] WARNING: mask channel dump failed: {exc}")
                     recs.clear()
 
                 conf = np.asarray(out["world_points_conf"], dtype=np.float32)
@@ -248,6 +278,7 @@ class FusionMaSlam(MaSlam):
             sm.conf_threshold = conf_mean + 1e-6
         # keep what is needed to export static-only / dynamic-only clouds later
         sm.dynamic_masks = dyn_keep
+        sm.dynamic_core = dyn_core if (dyn_core is not None and dyn_keep is not None) else None
         sm.conf_raw = conf_raw_keep
 
         # ---- remainder copied verbatim from MaSlam.process_submap (330-345) ----
@@ -263,6 +294,8 @@ class FusionMaSlam(MaSlam):
             prev.conf[-1] = np.where(dyn_keep[0], 0.0, prev.conf[-1])
             if getattr(prev, "dynamic_masks", None) is not None:
                 prev.dynamic_masks[-1] = prev.dynamic_masks[-1] | dyn_keep[0]
+            if getattr(prev, "dynamic_core", None) is not None and sm.dynamic_core is not None:
+                prev.dynamic_core[-1] = prev.dynamic_core[-1] | sm.dynamic_core[0]
         if prev is None:
             self._add_first_submap(sm)
         else:
@@ -412,6 +445,123 @@ def _read_ply_xyzrgb(path):
     return np.stack([v["x"], v["y"], v["z"]], 1), np.stack([v["red"], v["green"], v["blue"]], 1)
 
 
+def dump_recon_cache(slam, graph, out_dir):
+    """Save every non-LC submap frame's raw reconstruction inputs (world points after the final
+    graph, colours, raw/masked confidence, the submap's threshold, the edge/flying validity mask,
+    the dynamic mask, camera pose, intrinsics, camera-frame depth, image path) so map-building
+    variants (fusion, thresholds, blur weighting) can be compared offline on identical data.
+    One npz per submap in <run>/recon_cache/. (2026-10-05, DYNAMIC_DUMP_RECON=1)"""
+    os.makedirs(out_dir, exist_ok=True)
+    n = 0
+    for sm in slam.map.ordered():
+        if sm.is_lc:
+            continue
+        W_pts, c2w = [], []
+        for i in range(sm.n):
+            M = graph.get_pose(sm.key(i)) @ np.linalg.inv(sm.poses_local[i])
+            Q = sm.points[i].reshape(-1, 3)
+            W_pts.append((Q @ M[:3, :3].T + M[:3, 3]).reshape(sm.points[i].shape).astype(np.float32))
+            c2w.append(graph.get_pose(sm.key(i)))
+        dyn = sm.dynamic_masks if getattr(sm, "dynamic_masks", None) is not None else np.zeros(sm.conf.shape, bool)
+        np.savez(os.path.join(out_dir, f"submap_{sm.base_id:06d}.npz"),
+                 points=np.stack(W_pts), colors=np.asarray(sm.colors, np.uint8),
+                 conf=np.asarray(sm.conf, np.float16),
+                 conf_raw=np.asarray(getattr(sm, "conf_raw", sm.conf), np.float16),
+                 conf_threshold=np.float32(sm.conf_threshold),
+                 valid=(np.asarray(sm.mask, bool) if getattr(sm, "mask", None) is not None else np.ones(sm.conf.shape, bool)),
+                 dyn=np.asarray(dyn, bool), c2w=np.stack(c2w).astype(np.float64),
+                 K=np.asarray(sm.intrinsics, np.float64),
+                 depth=(np.asarray(sm.depth, np.float16) if sm.depth is not None else np.zeros(sm.conf.shape, np.float16)),
+                 image_paths=np.array(sm.image_paths), base_id=sm.base_id)
+        n += sm.n
+    print(f"[fusion] recon cache: {n} frames -> {out_dir}")
+
+
+def depth_consistent_core(core, depth, margin=0.3):
+    """Keep, per connected region of the core mask, only pixels within its own depth range
+    (p10 - margin .. p90 + margin): wall pixels seen through an arm/body gap or at the outline are
+    not part of the person and must not land in dynamic_pcd.ply."""
+    import cv2
+    out = np.zeros_like(core)
+    for k in range(core.shape[0]):
+        if not core[k].any():
+            continue
+        n, lab = cv2.connectedComponents(core[k].astype(np.uint8), connectivity=8)
+        dk = depth[k]
+        for c in range(1, n):
+            m = lab == c
+            d = dk[m & (dk > 0)]
+            if d.size < 50:
+                out[k] |= m
+                continue
+            lo, hi = np.percentile(d, 10) - margin, np.percentile(d, 90) + margin
+            out[k] |= m & (dk >= lo) & (dk <= hi)
+    return out
+
+
+def _sensor_view(slam, sm, i, dyn):
+    """The D435 depth of submap frame i with the calibrated K, and the dynamic mask mapped from the
+    model grid (MapAnything: scale by H_model/H_sensor, centre-crop the width) to sensor pixels.
+    The model's own depth is smooth and its K is off by ~15 px (checked 2026-10-05); the sensor depth
+    is what tells a person from the wall behind. None if no sensor depth / K (rgb-only runs)."""
+    if os.environ.get("DYNAMIC_CARVE_DEPTH", "sensor") != "sensor":
+        return None
+    dps = getattr(sm, "depth_paths", None); K = getattr(slam, "_input_K", None)
+    if not dps or K is None or i >= len(dps) or dps[i] is None:
+        return None
+    try:
+        from PIL import Image
+        Z = np.asarray(Image.open(dps[i]), np.float32) / float(getattr(slam, "_depth_scale", 1000.0) or 1000.0)
+    except Exception:
+        return None
+    if Z.ndim != 2:
+        return None
+    Hs, Ws = Z.shape; Hm, Wm = dyn.shape
+    sc = Hm / Hs; crop = (Ws * sc - Wm) / 2.0
+    vv, uu = np.mgrid[0:Hs, 0:Ws]
+    xm = np.round(uu * sc - crop).astype(int); ym = np.round(vv * sc).astype(int)
+    inside = (xm >= 0) & (xm < Wm) & (ym >= 0) & (ym < Hm)
+    dyn_s = np.zeros((Hs, Ws), bool)
+    dyn_s[inside] = dyn[ym[inside], xm[inside]]
+    K = np.asarray(K, np.float64).reshape(3, 3)
+    return Z, [float(K[0, 0]), float(K[0, 2]), float(K[1, 1]), float(K[1, 2])], dyn_s
+
+
+def export_fused_map(slam, graph, out_dir, voxel=0.005, trunc=0.015, conf_coef=0.75):
+    """combined_fused.ply: TSDF fusion of every kept pixel (confident, valid, not dynamic) with the
+    final poses. Stacking per-frame point maps leaves several offset copies of each surface (median
+    surface thickness 9-12 mm on the 30 Sept runs); fusion averages them into one surface (5-7 mm)
+    and the free space seen by other frames erases transient leftovers. (2026-10-06)"""
+    import open3d as o3d
+    vol = o3d.pipelines.integration.ScalableTSDFVolume(
+        voxel_length=voxel, sdf_trunc=trunc, color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
+    dmax = float(getattr(slam, "_depth_max", None) or 5.0)
+    n = 0
+    for sm in slam.map.ordered():
+        if sm.is_lc or sm.depth is None:
+            continue
+        thr = sm.conf_threshold * conf_coef
+        for i in range(sm.n):
+            keep = sm.conf[i] > thr
+            if getattr(sm, "mask", None) is not None:
+                keep &= sm.mask[i]
+            D = np.where(keep, np.asarray(sm.depth[i], np.float32), 0).astype(np.float32)
+            H, W = D.shape; K = np.asarray(sm.intrinsics[i], np.float64)
+            rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+                o3d.geometry.Image(np.ascontiguousarray(np.asarray(sm.colors[i], np.uint8))),
+                o3d.geometry.Image(np.ascontiguousarray(D)), depth_scale=1.0, depth_trunc=dmax,
+                convert_rgb_to_intensity=False)
+            vol.integrate(rgbd, o3d.camera.PinholeCameraIntrinsic(W, H, K[0, 0], K[1, 1], K[0, 2], K[1, 2]),
+                          np.linalg.inv(graph.get_pose(sm.key(i))))
+            n += 1
+    pc = vol.extract_point_cloud()
+    xyz = np.asarray(pc.points, np.float32); rgb = (np.asarray(pc.colors) * 255 + 0.5).clip(0, 255).astype(np.uint8)
+    path = os.path.join(out_dir, "combined_fused.ply")
+    _write_ply(path, xyz, rgb)
+    print(f"[fusion] fused map: {len(xyz):,} points from {n} frames -> {path}")
+    return path
+
+
 def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None):
     """Multi-view check of the written map (2026-10-01).
 
@@ -427,6 +577,23 @@ def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None):
     """
     min_dyn = int(os.environ.get("DYNAMIC_CARVE_MIN_DYN", "1")) if min_dyn is None else min_dyn
     max_static = int(os.environ.get("DYNAMIC_CARVE_MAX_STATIC", "1")) if max_static is None else max_static
+    frames = _observation_frames(slam, graph)
+    if not frames or not any(f[3].any() for f in frames.values()):
+        return 0
+    xyz, rgb = _read_ply_xyzrgb(path)
+    n_dyn, n_sta = _count_observations(frames, xyz)
+    rm = (n_dyn >= min_dyn) & (n_sta <= max_static)
+    if rm.any():
+        _write_ply(path, xyz[~rm].astype(np.float32), rgb[~rm].astype(np.uint8))
+        _write_ply(os.path.join(os.path.dirname(path), "carved_pcd.ply"), xyz[rm].astype(np.float32), rgb[rm].astype(np.uint8))
+    print(f"[fusion] carving: {int(rm.sum()):,} of {len(xyz):,} map points removed "
+          f"(seen on dynamic pixels >= {min_dyn}x, on kept pixels <= {max_static}x, {len(frames)} frames)")
+    return int(rm.sum())
+
+
+def _observation_frames(slam, graph):
+    """Per unique frame: [c2w, (fx, cx, fy, cy), depth image, dynamic mask] -- the D435 depth with the
+    calibrated K when available (_sensor_view), else the model depth/K."""
     frames = {}                                    # image path -> [c2w, K, Z, dyn]; shared frames merged
     for sm in slam.map.ordered():
         if sm.is_lc or getattr(sm, "dynamic_masks", None) is None:
@@ -435,7 +602,8 @@ def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None):
             key = sm.image_paths[i] if sm.image_paths else (sm.base_id, i)
             dyn = np.asarray(sm.dynamic_masks[i], bool)
             if key in frames:
-                frames[key][3] = frames[key][3] | dyn
+                sens = _sensor_view(slam, sm, i, dyn) if frames[key][3].shape != dyn.shape else None
+                frames[key][3] = frames[key][3] | (sens[2] if sens is not None else dyn)
                 continue
             if sm.depth is not None:
                 Z = np.asarray(sm.depth[i], np.float32)
@@ -446,10 +614,17 @@ def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None):
                 Z = np.where(sm.mask[i], Z, 0)
             if Z.shape != dyn.shape:
                 continue
-            frames[key] = [graph.get_pose(sm.key(i)), [float(x) for x in np.asarray(sm.intrinsics[i]).reshape(-1)[[0, 2, 4, 5]]], Z, dyn]
-    if not frames or not any(f[3].any() for f in frames.values()):
-        return 0
-    xyz, rgb = _read_ply_xyzrgb(path)
+            Kf = [float(x) for x in np.asarray(sm.intrinsics[i]).reshape(-1)[[0, 2, 4, 5]]]
+            sens = _sensor_view(slam, sm, i, dyn)                # (Z, K, dyn) at sensor resolution, or None
+            if sens is not None:
+                Z, Kf, dyn = sens
+            frames[key] = [graph.get_pose(sm.key(i)), Kf, Z, dyn]
+    return frames
+
+
+def _count_observations(frames, xyz):
+    """For each world point: in how many frames is it seen at the measured depth
+    (|z - Z| < 3 cm + 2 % z) on a dynamic pixel, and on a kept (static) pixel."""
     dev = "cuda" if (torch is not None and torch.cuda.is_available()) else "cpu"
     P = torch.from_numpy(xyz.astype(np.float32)).to(dev)
     n_dyn = torch.zeros(len(P), dtype=torch.int32, device=dev); n_sta = torch.zeros_like(n_dyn)
@@ -468,13 +643,7 @@ def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None):
             seen = ok & (zf > 0) & ((z - zf).abs() < 0.03 + 0.02 * z)
             d = Dt[vc, uc]
             n_dyn[a:a + 4_000_000] += (seen & d).int(); n_sta[a:a + 4_000_000] += (seen & ~d).int()
-    rm = ((n_dyn >= min_dyn) & (n_sta <= max_static)).cpu().numpy()
-    if rm.any():
-        _write_ply(path, xyz[~rm].astype(np.float32), rgb[~rm].astype(np.uint8))
-        _write_ply(os.path.join(os.path.dirname(path), "carved_pcd.ply"), xyz[rm].astype(np.float32), rgb[rm].astype(np.uint8))
-    print(f"[fusion] carving: {int(rm.sum()):,} of {len(xyz):,} map points removed "
-          f"(seen on dynamic pixels >= {min_dyn}x, on kept pixels <= {max_static}x, {len(frames)} frames)")
-    return int(rm.sum())
+    return n_dyn.cpu().numpy(), n_sta.cpu().numpy()
 
 
 def export_split_clouds(slam, out_dir, max_points=2_000_000, conf_coef=0.75):
@@ -494,8 +663,11 @@ def export_split_clouds(slam, out_dir, max_points=2_000_000, conf_coef=0.75):
         "all_points_pcd.ply":   lambda sm, i: np.ones(sm.conf_raw[i].shape, bool),
         "static_only_pcd.ply":  lambda sm, i: (np.ones(sm.conf_raw[i].shape, bool)
                                                if sm.dynamic_masks is None else ~sm.dynamic_masks[i]),
-        "dynamic_pcd.ply":      lambda sm, i: (np.zeros(sm.conf_raw[i].shape, bool)
-                                               if sm.dynamic_masks is None else sm.dynamic_masks[i]),
+        # people and moving objects only: the core detections, without the safety margins (dilation,
+        # edge ring) that keep person edges out of the map but are background pixels (2026-10-06)
+        "dynamic_pcd.ply":      lambda sm, i: (np.zeros(sm.conf_raw[i].shape, bool) if sm.dynamic_masks is None
+                                               else sm.dynamic_core[i] if getattr(sm, "dynamic_core", None) is not None
+                                               else sm.dynamic_masks[i]),
     }
     counts = {}
     for name, select in sels.items():
@@ -523,6 +695,19 @@ def export_split_clouds(slam, out_dir, max_points=2_000_000, conf_coef=0.75):
             pts.append(P); cols.append(C)
         xyz = np.concatenate(pts).astype(np.float32) if pts else np.zeros((0,3), np.float32)
         rgb = np.concatenate(cols).astype(np.uint8) if cols else np.zeros((0,3), np.uint8)
+        if name == "dynamic_pcd.ply" and len(xyz) and os.environ.get("DYNAMIC_STATIC_EVIDENCE", "1") == "1":
+            # a removed point that other frames see at the same 3D spot on a KEPT pixel (nobody there) is
+            # static -- e.g. a person's YOLO outline spilling onto the pillar they lean on. People are never
+            # seen as empty background at their own position. (2026-10-06)
+            try:
+                frames = _observation_frames(slam, slam.graph)
+                if frames:
+                    _, n_sta = _count_observations(frames, xyz.astype(np.float64))
+                    static = n_sta >= int(os.environ.get("DYNAMIC_STATIC_EVIDENCE_MIN", "2"))
+                    print(f"[fusion] dynamic_pcd: {int(static.sum()):,} of {len(xyz):,} points seen as static elsewhere -> dropped")
+                    xyz, rgb = xyz[~static], rgb[~static]
+            except Exception as exc:
+                print(f"[fusion] WARNING: static-evidence filter skipped: {type(exc).__name__}: {exc}")
         path = os.path.join(out_dir, name)
         _write_ply(path, xyz, rgb)
         counts[name] = len(xyz)

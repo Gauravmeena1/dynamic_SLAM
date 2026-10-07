@@ -31,10 +31,12 @@ echo " SEMANTIC: $([ "${SEMANTIC:-0}" = 1 ] && echo "ON (instances + deploy)" ||
 echo " Viewer : http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"
 echo "======================================================================"
 exec docker exec -it -e DYNAMIC_GEO_GATE="${DYNAMIC_GEO_GATE:-anchor}" \
-  -e DYNAMIC_PERSON_DILATE_PX="${DYNAMIC_PERSON_DILATE_PX:-5}" -e DYNAMIC_PERSON_BOX_FILL="${DYNAMIC_PERSON_BOX_FILL:-1}" \
-  -e DYNAMIC_BRIDGE_MAX_GAP="${DYNAMIC_BRIDGE_MAX_GAP:-3}" -e DYNAMIC_BOX_FILL_DOWN="${DYNAMIC_BOX_FILL_DOWN:-0.6}" \
-  -e DYNAMIC_EDGE_RING_PX="${DYNAMIC_EDGE_RING_PX:-12}" -e DYNAMIC_CARVE="${DYNAMIC_CARVE:-1}" \
-  -e DYNAMIC_CARRIED_RULE="${DYNAMIC_CARRIED_RULE:-touch}" "$SLAM_C" bash -c \
+  -e DYNAMIC_PERSON_DILATE_PX="${DYNAMIC_PERSON_DILATE_PX:-5}" -e DYNAMIC_PERSON_BOX_FILL="${DYNAMIC_PERSON_BOX_FILL:-0}" \
+  -e DYNAMIC_BRIDGE_MAX_GAP="${DYNAMIC_BRIDGE_MAX_GAP:-3}" -e DYNAMIC_BOX_FILL_DOWN="${DYNAMIC_BOX_FILL_DOWN:-0.3}" \
+  -e DYNAMIC_EDGE_RING_PX="${DYNAMIC_EDGE_RING_PX:-8}" -e DYNAMIC_CARVE="${DYNAMIC_CARVE:-1}" \
+  -e DYNAMIC_CARRIED_RULE="${DYNAMIC_CARRIED_RULE:-touch}" -e DYNAMIC_DUMP_RECON="${DYNAMIC_DUMP_RECON:-0}" \
+  -e DYNAMIC_DUMP_MASKS="${DYNAMIC_DUMP_MASKS:-0}" -e DYNAMIC_LEG_FILL="${DYNAMIC_LEG_FILL:-1}" \
+  -e MA_FORCE_INPUT_K="${MA_FORCE_INPUT_K:-0}" "$SLAM_C" bash -c \
   "cd $SERVER_CT && PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 \
    python -m ma_slam_stream.server_api \
      --depth_max 5 --submap_size 16 --keyframe_disparity 0 \
