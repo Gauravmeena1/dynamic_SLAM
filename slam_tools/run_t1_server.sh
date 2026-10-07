@@ -13,7 +13,7 @@
 #                         person-pixel leftovers (defaults 5 / 1 / 3 / 0.6 / 12; 0 / 0 / 1 / 0 / 0 = before 2026-10-01)
 #   DYNAMIC_CARVE=1       (default) after the map is written, drop points that other frames only ever
 #                         see on removed (dynamic) pixels -> carved_pcd.ply; 0 = off
-#   DYNAMIC_CARRIED_RULE  touch (default) / touch_and_moving / touch_and_moving_or_held: when an object
+#   DYNAMIC_CARRIED_RULE  touch_and_moving_or_held (default) / touch_and_moving / touch: when an object
 #                         next to a person is removed with them (see chunk_fusion_masker.py)
 #   SEMANTIC=1            also build the semantic instance map + deploy files (--semantic
 #                         --sem_chunk_size 4, no --no_deploy); needs ~20 GB more GPU memory.
@@ -34,7 +34,7 @@ exec docker exec -it -e DYNAMIC_GEO_GATE="${DYNAMIC_GEO_GATE:-anchor}" \
   -e DYNAMIC_PERSON_DILATE_PX="${DYNAMIC_PERSON_DILATE_PX:-5}" -e DYNAMIC_PERSON_BOX_FILL="${DYNAMIC_PERSON_BOX_FILL:-0}" \
   -e DYNAMIC_BRIDGE_MAX_GAP="${DYNAMIC_BRIDGE_MAX_GAP:-3}" -e DYNAMIC_BOX_FILL_DOWN="${DYNAMIC_BOX_FILL_DOWN:-0.3}" \
   -e DYNAMIC_EDGE_RING_PX="${DYNAMIC_EDGE_RING_PX:-8}" -e DYNAMIC_CARVE="${DYNAMIC_CARVE:-1}" \
-  -e DYNAMIC_CARRIED_RULE="${DYNAMIC_CARRIED_RULE:-touch}" -e DYNAMIC_DUMP_RECON="${DYNAMIC_DUMP_RECON:-0}" \
+  -e DYNAMIC_CARRIED_RULE="${DYNAMIC_CARRIED_RULE:-touch_and_moving_or_held}" -e DYNAMIC_DUMP_RECON="${DYNAMIC_DUMP_RECON:-0}" \
   -e DYNAMIC_DUMP_MASKS="${DYNAMIC_DUMP_MASKS:-0}" -e DYNAMIC_LEG_FILL="${DYNAMIC_LEG_FILL:-1}" \
   -e MA_FORCE_INPUT_K="${MA_FORCE_INPUT_K:-0}" "$SLAM_C" bash -c \
   "cd $SERVER_CT && PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 \

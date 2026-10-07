@@ -23,7 +23,7 @@ This branch adds Gaurav's dynamic-object masking to the live 3D SLAM run by `run
 
 Per chunk of 16 frames:
 
-1. **Semantic (YOLOv9e-seg):** person confidence ≥ 0.15 (others ≥ 0.25). A person is always removed. Any other movable-class object is removed only if it is **moving** (≥ 30 % of its pixels have a flow residual above the frame threshold) or **carried** (touches a person, 10 px).
+1. **Semantic (YOLOv9e-seg):** person confidence ≥ 0.15 (others ≥ 0.25). A person is always removed. Any other movable-class object is removed only if it is **moving** (≥ 30 % of its pixels have a flow residual above the frame threshold) or **carried**: it touches a person (10 px) and either moves or is **held** — at least 70 % of it inside the person's outline, within 25 cm of the person's depth, and at most 0.3 of the person's size. A phone in the hand is removed; a suitcase, laptop or bottle standing beside someone stays.
 2. **Motion (FlowSeek optical flow vs. camera-pose flow):** adaptive threshold `median + 3·MAD`, checked against both neighbour frames. **Geo gate (new, default `anchor`):** a motion blob is kept only if it touches a movable-class detection (30 px). On the 22 Sept lab capture this cut person-free frames with more than 1 % removed from 59/296 to 1/296, with the people removal unchanged. Trade-off: an object YOLO cannot label is no longer removed by motion alone. `DYNAMIC_GEO_GATE=none` gives the old behaviour.
 3. **Bridge:** fills up to 3 frames without a YOLO detection when the same chunk has a detection before and after the gap (one side only is allowed for a person entering or leaving through the image border).
 4. **Person cleanup (since 2026-10-06, "v9"):** person masks grow by 5 px. The 1 Oct box fill is off: in live runs people stood against walls and glass, and the box rectangle swallowed the wall. Instead, **leg fill** adds pixels only below a person's outline, only when an occluder is in front, at lower-body depth, at least 10 cm behind the occluder and never on a detected object. Depth-jump ("flying") pixels within 8 px of a person are removed. The geo gate and carried growth are limited to 30 px around a person, and the bridge only fills at the source person's depth (±0.3 m).
@@ -43,7 +43,7 @@ Switches: put them in `.env`. Every `slam_tools` script loads it, also when `run
 | `DYNAMIC_BRIDGE_MAX_GAP` | `3` | frames the bridge may fill |
 | `DYNAMIC_EDGE_RING_PX` | `8` | depth-edge ring around people; `0` = off |
 | `DYNAMIC_CARVE` | `1` | multi-view carving; `0` = off |
-| `DYNAMIC_CARRIED_RULE` | `touch` | `touch_and_moving_or_held` removes an object beside a person only if it moves or is held (used for the 6 Oct runs) |
+| `DYNAMIC_CARRIED_RULE` | `touch_and_moving_or_held` | the held rule (default since 2026-10-08, used live on 5-6 Oct); `touch` = remove anything touching a person (old default), `touch_and_moving` = only if it moves |
 | `DYNAMIC_DUMP_MASKS` / `DYNAMIC_DUMP_RECON` | `0` | save per-channel masks (`mask_channels/`) / the reconstruction cache (`recon_cache/`) for offline analysis |
 | `MA_FORCE_INPUT_K` | `0` | rebuild points along the true camera rays (needs the matching SLAM-server change; small gain, left off) |
 | `SEMANTIC` | unset (`--no_deploy`) | `1` = semantic instances + deploy files (~20 GB more GPU memory) |
@@ -52,7 +52,7 @@ Fixed in code (not forwarded by `run_t1_server.sh`): `DYNAMIC_CARVE_DEPTH=sensor
 
 ### Version 2026-10-06 (branch `v3-2026-10-06`)
 
-Tested live on map `Map803_202610_06`, run `map803_1006_run2` (251 frames, 16/17 goals, 8 loops), with `SEMANTIC=1`, `DYNAMIC_CARRIED_RULE=touch_and_moving_or_held`, and mask and recon dumps on:
+Tested live on map `Map803_202610_06`, run `map803_1006_run2` (251 frames, 16/17 goals, 8 loops), with `SEMANTIC=1`, the held rule (now the default), and mask and recon dumps on:
 - 85 % of removed pixels are people; the basket (0.1 %) and the suitcase (0.3 %) stay in the map.
 - Alignment PASS: `rmse_all` 0.104 m, scale 0.90.
 - Known issue: in blurred turning frames the bridge can still paste a person shape onto a static object (frames 35, 78, 108, 170).
