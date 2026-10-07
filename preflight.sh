@@ -99,7 +99,7 @@ elif [ "${free_gb:-0}" -ge 30 ]; then warn "只剩 ${free_gb}G（腳本門檻 30
 else bad "只剩 ${free_gb}G，低於門檻 30G"; fix "清 $TOOLS/outputs_malong 裡不要的 run"; fi
 
 echo "── 5. container ───────────────────────────────────────"
-for c in zealous_agnesi "$GW"; do
+for c in "${KACHAKA_AI_CONTAINER:-zealous_agnesi}" "$GW"; do
     docker inspect "$c" >/dev/null 2>&1 \
         && ok "$c 存在（Exited 沒關係，腳本會 docker start）" \
         || { bad "container $c 不存在"; fix "見 README_VER2 §1"; }
