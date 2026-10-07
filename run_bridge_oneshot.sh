@@ -310,8 +310,9 @@ step "5/7 啟動 SLAM 收資料（manual 模式：collector 完全不碰機器�
 tmux kill-session -t "$SESSION" 2>/dev/null
 tmux new-session -d -s "$SESSION" -n collect
 SLAM_OWNED=1
+# a tmux window does not inherit this script's environment: pass the SLAM knobs explicitly
 tmux send-keys -t "$SESSION:collect" \
-    "cd $TOOLS && $SLAM_SH manual --name $NAME -y --out file:///fungi/$OUT_SUB/$NAME" C-m
+    "cd $TOOLS && SEMANTIC=${SEMANTIC:-0} COLLECT_EXTRA=$(printf %q "${COLLECT_EXTRA:-}") $SLAM_SH manual --name $NAME -y --out file:///fungi/$OUT_SUB/$NAME" C-m
 
 echo "  ${C_DIM}冷啟動要載權重、開相機，數分鐘正常。畫面：tmux attach -t $SESSION${C_R}"
 # ⚠️ 不要用 `tmux capture-pane | grep 畫面字串` 判斷（2026-08-26 實測失敗，整趟報廢）：
