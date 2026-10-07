@@ -148,9 +148,10 @@ def build_masker(device: str = "cuda", **kw):
         bridge_max_gap=int(os.environ.get("DYNAMIC_BRIDGE_MAX_GAP", "3")),
         box_fill_down=float(os.environ.get("DYNAMIC_BOX_FILL_DOWN", "0.3")),
         edge_ring_px=int(os.environ.get("DYNAMIC_EDGE_RING_PX", "8")),
-        # improvement #2 (2026-10-05): touch (default, unchanged) / touch_and_moving /
+        # improvement #2: touch / touch_and_moving / touch_and_moving_or_held (default since 2026-10-08,
+        # the rule used live on 5-6 Oct) /
         # touch_and_moving_or_held (= moving OR held in the hand; keeps still objects beside people)
-        carried_rule=os.environ.get("DYNAMIC_CARRIED_RULE", "touch"),
+        carried_rule=os.environ.get("DYNAMIC_CARRIED_RULE", "touch_and_moving_or_held"),
         leg_fill=os.environ.get("DYNAMIC_LEG_FILL", "1") == "1",
     )
     params.update(kw)
