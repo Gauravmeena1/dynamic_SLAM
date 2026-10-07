@@ -215,7 +215,7 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
     <div class="stats">
       <div class="stat"><div class="v">0.077 <small>m</small></div><div class="l">2D/3D alignment RMSE on the map803 run (pass threshold 0.30 m)</div></div>
       <div class="stat"><div class="v">59 → 1</div><div class="l">person-free frames with &gt;1 % wrongly removed (of 296) after the geo gate</div></div>
-      <div class="stat"><div class="v">−90 %</div><div class="l">person points left in the 3D map (36,244 → 3,546) after 3D carving</div></div>
+      <div class="stat"><div class="v">85 %</div><div class="l">of removed pixels are people on the 6 Oct live run; basket and suitcase kept</div></div>
       <div class="stat"><div class="v">57 / 68</div><div class="l">semantic objects that get a reachable navigation goal for the robotic agent</div></div>
     </div>
   </div>
@@ -224,9 +224,12 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
 <section id="news">
   <div class="wrap">
     <h2>What's new</h2>
-    <p class="sub">Latest changes in this repository. Each Oct 1 change can be switched off in <code>.env</code>, so older results can be reproduced.</p>
+    <p class="sub">Latest changes in this repository. Every masking step has a switch in <code>.env</code>, and the 1 Oct version is kept on branch <code>v1-2026-10-01</code>.</p>
     <ol class="timeline">
-      <li><time>Oct 1, 2026</time><div><b>Person points left in the 3D map: 36,244 → 3,546.</b> Five changes against people leaning on stools and boxes: mask dilation, filling the person's box at their depth (and below it), a 3-frame bridge, a depth-edge ring, and multi-view 3D carving. Also a fix for the overlap frame shared by two submaps. <a href="#cleanup">Details</a></div></li>
+      <li><time>Oct 8, 2026</time><div><b>Held rule is the default.</b> An object touching a person is removed only if it moves or is held in the hand. It ran live on 5 and 6 Oct: a bottle in the hand was removed, every suitcase, laptop and standing bottle beside a person was kept.</div></li>
+      <li><time>Oct 6, 2026</time><div><b>Masking v9, tested live on <code>map803_1006_run2</code>.</b> In live runs people stood against walls and glass, and the 1 Oct box fill removed walls and bags with them. The box fill is replaced by a narrow leg fill, every step is limited to the area around a person, static objects are protected, carving uses the camera's real depth, and a thinner fused map is written. Result: 85 % of removed pixels are people, alignment 0.104 m. <a href="#cleanup">Details</a></div></li>
+      <li><time>Oct 5, 2026</time><div><b>Two fixes.</b> The box fill no longer swallows a suitcase standing beside a person, and a second recording on a running server no longer crashes.</div></li>
+      <li><time>Oct 1, 2026</time><div><b>Person points left in the 3D map: 36,244 → 3,546.</b> Five changes against people leaning on stools and boxes: mask dilation, filling the person's box at their depth (and below it), a 3-frame bridge, a depth-edge ring, and multi-view 3D carving. Also a fix for the overlap frame shared by two submaps. Kept on branch <code>v1-2026-10-01</code>.</div></li>
       <li><time>Oct 1, 2026</time><div><b><code>SEMANTIC=1</code></b> in <code>run_t1_server.sh</code> builds the semantic instance map and the deploy files in the same run, so alignment and the navigation bundle work with masking on.</div></li>
       <li><time>Sep 30, 2026</time><div><b>SAM 3.1 compared fairly with YOLO.</b> An earlier SAM 3 result came from a class-id bug; after the fix the two detectors find people in almost the same frames (117 vs 116). A stricter "carried" rule was added as an option (off by default).</div></li>
       <li><time>Sep 28, 2026</time><div><b>Geo gate.</b> Motion-only blobs must touch a detected movable object. Person-free frames with &gt;1 % removed: 59 → 1 of 296.</div></li>
@@ -316,32 +319,32 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
 <section id="masking">
   <div class="wrap">
     <h2>Dynamic-object masking</h2>
-    <p class="sub">People are always removed. Other movable objects (laptop, bag, bottle…) are removed only while they move or are carried, so a laptop left on a desk stays in the map. Masked pixels never become 3D points.</p>
+    <p class="sub">People are always removed. Other movable objects (laptop, bag, bottle…) are removed only while they move or are held, so a laptop left on a desk or a suitcase beside someone stays in the map. Masked pixels never become 3D points.</p>
 
     <div class="channels">
       <div class="ch" style="--c: var(--red)">
         <h4><i></i>Semantic: YOLOv9e-seg</h4>
         <p>Instance masks per frame. Person confidence ≥ 0.15 (others ≥ 0.25), set low on purpose for blurry robot footage.</p>
-        <p>A person is always removed. Another movable object is removed only if it is <b>moving</b> (≥ 30 % of its pixels have a high flow residual) or <b>carried</b> (touches a person).</p>
+        <p>A person is always removed. Another movable object is removed only if it is <b>moving</b> (its pixels move against their surroundings and its 3D centre moves ≥ 10 cm) or <b>held</b>: it touches a person, lies mostly inside their outline, at their depth (±25 cm), and is small next to them.</p>
       </div>
       <div class="ch" style="--c: var(--amber)">
         <h4><i></i>Motion: FlowSeek optical flow</h4>
         <p>Measured flow is compared with the flow that the camera's own motion predicts. Pixels whose residual exceeds an adaptive threshold (median + 3·MAD), checked against both neighbouring frames, are moving.</p>
-        <p><b>Geo gate:</b> a motion blob is kept only if it touches a movable-class detection (30 px).</p>
+        <p><b>Geo gate:</b> a motion blob is kept only next to a detected person (30 px).</p>
       </div>
       <div class="ch" style="--c: var(--blue)">
         <h4><i></i>Bridge</h4>
-        <p>Fills up to 3 frames without a detection when the same chunk has a detection before and after the gap, so a few blurry frames do not leave a "ghost" in the map.</p><p>From one side only, it fills a gap only for something entering or leaving through the image border.</p>
+        <p>Fills up to 3 frames without a detection when the same chunk has a detection before and after the gap, so a few blurry frames do not leave a "ghost" in the map.</p><p>It only fills pixels at the depth of the person it was carried from (±0.3 m).</p>
       </div>
     </div>
 
-    <div class="rule" id="cleanup"><b>Person cleanup (Oct 1).</b> People leaning on a stool or box still left points in the map: YOLO's mask stops at the occluder, depth edges leave "flying" pixels, and other frames' predicted depth can put a point where a person stands. Five steps, all on by default:
+    <div class="rule" id="cleanup"><b>Person cleanup (v9, Oct 6).</b> YOLO's mask stops at an occluder, depth edges leave "flying" pixels, and other frames' predicted depth can put a point where a person stands. Five steps, all on by default; each one only acts close to a person, so walls, bags and furniture next to people stay:
       <div class="steps">
         <div><b>Dilate</b>Grow every person mask by 5 px.<br><code>DYNAMIC_PERSON_DILATE_PX=5</code></div>
-        <div><b>Box fill</b>Inside the person's detection box, add pixels at the person's depth, and extend the box 0.6× downwards for legs under furniture.<br><code>DYNAMIC_PERSON_BOX_FILL=1</code> <code>DYNAMIC_BOX_FILL_DOWN=0.6</code></div>
-        <div><b>Bridge 3 frames</b>Fill short detector gaps.<br><code>DYNAMIC_BRIDGE_MAX_GAP=3</code></div>
-        <div><b>Edge ring</b>Drop depth-jump pixels within 12 px of the mask.<br><code>DYNAMIC_EDGE_RING_PX=12</code></div>
-        <div><b>3D carving</b>Drop map points that frames only ever see on removed pixels; they are saved to <code>carved_pcd.ply</code>.<br><code>DYNAMIC_CARVE=1</code></div>
+        <div><b>Leg fill</b>Below a person's outline, when something stands in front, add pixels at lower-body depth (never the occluder, never a detected object).<br><code>DYNAMIC_LEG_FILL=1</code></div>
+        <div><b>Bridge 3 frames</b>Fill short detector gaps at the person's depth.<br><code>DYNAMIC_BRIDGE_MAX_GAP=3</code></div>
+        <div><b>Edge ring</b>Drop depth-jump pixels within 8 px of a person.<br><code>DYNAMIC_EDGE_RING_PX=8</code></div>
+        <div><b>3D carving</b>Using the camera's real depth, drop map points that frames only ever see on removed pixels; saved to <code>carved_pcd.ply</code>.<br><code>DYNAMIC_CARVE=1</code></div>
       </div>
     </div>
 
@@ -352,7 +355,7 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
       </figure>
       <figure>
         <img src="assets/carving_before_after.jpg" alt="Point-cloud renders: before, magenta person points visible; after, almost none" width="768" height="576" loading="lazy">
-        <figcaption><b>3D carving removes leftover person points.</b> Renders of the 3D map from two camera poses; <span class="dot" style="background:#e000e0"></span>magenta = points that lie on a person, blue = person outline. Across the run, person points fell from 36,244 to 3,546. Much of the remainder is box edges under a hand (contact lines).</figcaption>
+        <figcaption><b>3D carving removes leftover person points.</b> Renders of the 3D map from two camera poses; <span class="dot" style="background:#e000e0"></span>magenta = points that lie on a person, blue = person outline. With the 1 Oct version, person points across the run fell from 36,244 to 3,546; v9 keeps about 6.2k, because it no longer removes the walls and objects around people.</figcaption>
       </figure>
     </div>
     <figure>
@@ -376,9 +379,11 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
         <tbody>
           <tr><td><code>mapping_20260922_01</code></td><td>Offline, 389 frames</td><td>Mean pixels removed per frame / motion-only share</td><td class="num">2.2 % / 0.1 %</td></tr>
           <tr><td><code>mapping_20260922_01</code></td><td>Offline</td><td>Person-free frames with &gt;1 % removed, before → after geo gate</td><td class="num">59 → 1 of 296</td></tr>
-          <tr><td><code>map803_0930_run5</code></td><td>Live + semantic</td><td>Person points left in the 3D map (v1 → v2 → v3 → v4)</td><td class="num">36,244 → 3,546</td></tr>
+          <tr><td><code>map803_0930_run5</code></td><td>Live + semantic</td><td>Person points left in the 3D map (1 Oct version; v9: about 6.2k)</td><td class="num">36,244 → 3,546</td></tr>
           <tr><td><code>map803_0930_run5</code></td><td>Live + semantic</td><td>Alignment RMSE (lever arm corrected), max error</td><td class="num">0.077 m, 0.151 m</td></tr>
           <tr><td><code>map803_0930_run5</code></td><td>Nav bundle</td><td>Objects with a goal / in mapped space</td><td class="num">57 / 68, 25</td></tr>
+          <tr><td><code>map803_1006_run2</code></td><td>Live, 251 frames (v9)</td><td>Share of removed pixels that are people; basket and suitcase</td><td class="num">85 %, kept</td></tr>
+          <tr><td><code>map803_1006_run2</code></td><td>Live, 251 frames (v9)</td><td>Alignment RMSE</td><td class="num">0.104 m <span class="tag ok">pass</span></td></tr>
           <tr><td><code>onsite_remap_run3</code></td><td>Live, 407 frames</td><td>Alignment RMSE (reference baseline)</td><td class="num">0.104 m <span class="tag ok">pass</span></td></tr>
           <tr><td><code>ec129_0911_bridge</code></td><td>Live, 910 frames</td><td>Alignment RMSE</td><td class="num">0.108 m <span class="tag ok">pass</span></td></tr>
           <tr><td><code>lab_20260925</code> run3, move1</td><td>Live, people walking</td><td>Walking, sitting and carrying people removed</td><td><span class="tag ok">qualitative</span></td></tr>
@@ -397,7 +402,7 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
         </tbody>
       </table>
     </div>
-    <p class="sub" style="margin-top:10px">The two detectors agree on 105 frames; their union covers 128 (+10 % recall), which is a candidate for offline map building.</p>
+    <p class="sub" style="margin-top:10px">The two detectors agree on 105 frames; their union covers 128. On the 6 Oct runs YOLO already finds the person in 98–99 % of the reference pixels, and a YOLO + SAM 3.1 ensemble gains little: the person points that remain come from depth spill around people, not from missed detections.</p>
 
     <figure>
       <img src="assets/map3d_views.jpg" alt="Two views of a coloured 3D point-cloud map of a lab room with the ceiling removed" width="1800" height="633" loading="lazy">
@@ -463,7 +468,7 @@ python3 slam_tools/replay_ab.py mapping_20260922_01 offline_test1
 <span class="c"># top-down before | after | removed</span>
 docker exec "$KACHAKA_AI_CONTAINER" python \
   "$KACHAKA_CODE_DIR_CT/dynamic_SLAM/slam_tools/bev_compare.py" /fungi/outputs_malong/offline_test1</pre></div>
-      <p>Expected on <code>mapping_20260922_01</code>: about 2.2 % of pixels removed per frame, about 0.1 % from motion alone (measured before the Oct 1 person cleanup, which removes a little more around people). To compare with the old behaviour, start the server with <code>DYNAMIC_PERSON_DILATE_PX=0 DYNAMIC_PERSON_BOX_FILL=0 DYNAMIC_BRIDGE_MAX_GAP=1 DYNAMIC_BOX_FILL_DOWN=0 DYNAMIC_EDGE_RING_PX=0 DYNAMIC_CARVE=0</code>.</p>
+      <p>Expected on <code>mapping_20260922_01</code>: about 2.2 % of pixels removed per frame, about 0.1 % from motion alone (measured with the September method). For the September behaviour, put <code>DYNAMIC_PERSON_DILATE_PX=0 DYNAMIC_LEG_FILL=0 DYNAMIC_BRIDGE_MAX_GAP=1 DYNAMIC_EDGE_RING_PX=0 DYNAMIC_CARVE=0 DYNAMIC_CARRIED_RULE=touch</code> in <code>.env</code>; for the 1 Oct version, use branch <code>v1-2026-10-01</code>.</p>
     </div>
 
     <div class="panel" id="p4" hidden>
@@ -540,8 +545,10 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
         <h3 style="margin-top:0">Known limitations</h3>
         <ul class="plain">
           <li>With the geo gate on, an object the detector cannot label is no longer removed by motion alone (<code>DYNAMIC_GEO_GATE=none</code> restores it).</li>
-          <li>When a person leans on a stool or box, the per-frame mask also covers the object; it survives only through other views.</li>
-          <li>A still object next to a still person (e.g. a suitcase) can be treated as carried and removed.</li>
+          <li>A few thousand person points remain per run, from depth spill at a person's edges and legs behind furniture.</li>
+          <li>In blurred frames while the robot turns, the bridge can still paste a person shape onto a static object.</li>
+          <li>People far away or behind frosted glass are placed at the wrong depth by the model.</li>
+          <li>The held-rule thresholds come from only a few recordings.</li>
           <li>Tinted glass lets depth see through it, which gives blotchy areas; this isn't a masking error.</li>
           <li>A 0.40 m wall clearance removes much of the free space, so always check the preview.</li>
         </ul>
@@ -549,9 +556,9 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
       <div>
         <h3 style="margin-top:0">Being evaluated</h3>
         <ul class="plain">
-          <li>YOLO ∪ SAM 3.1 ensemble for offline maps (+10 % recall).</li>
-          <li>A stricter "carried" rule (<code>carried_rule="touch_and_moving"</code>, in the code but off): it keeps a still suitcase next to a still person, but drops a phone held in the hand. Next variant: carried if moving, or mostly inside the person mask.</li>
-          <li>Motion compensation with a fixed threshold in compensated space (the adaptive threshold cancelled the gain).</li>
+          <li>Giving YOLO its expected BGR colour order: on run2 it cut frames with a missed person from 11 to 3 (offline).</li>
+          <li>Stopping the bridge in blurred turning frames.</li>
+          <li>Using the robot's LiDAR pose as a prior to reduce SLAM drift.</li>
         </ul>
       </div>
     </div>
@@ -562,7 +569,7 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
 
 <footer>
   <div class="wrap">
-    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav. Mapping route tools from <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated 5 October 2026.
+    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav. Mapping route tools from <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated 8 October 2026.
   </div>
 </footer>
 
