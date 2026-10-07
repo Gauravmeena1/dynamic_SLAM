@@ -95,7 +95,7 @@ Safety gates:
 
 ## Dynamic-object masking
 
-People are always removed from the 3D map. Other movable objects are removed only while they move or are carried. Setup, the offline test, the live run, and all settings are in [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md).
+People are always removed from the 3D map. Other movable objects are removed only while they move or are held in a hand, so a suitcase or bag standing beside someone stays. Setup, the offline test, the live run, and all settings are in [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md).
 
 ## Maps and alignment
 
