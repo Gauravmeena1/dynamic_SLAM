@@ -366,9 +366,9 @@ fi
 tmux new-session -d -s "$SESSION" -n T1
 tmux set-option -t "$SESSION" remain-on-exit on >/dev/null 2>&1
 
-step "T1 — AI server ($SLAM_MODE / $SLAM_BACKEND)"
+step "T1 — AI server ($SLAM_MODE / $SLAM_BACKEND, semantic ${SEMANTIC:-0})"
 tmux send-keys -t "$SESSION:T1" \
-    "cd $SCRIPT_DIR && ./run_t1_server.sh --mode $SLAM_MODE --backend $SLAM_BACKEND" C-m
+    "cd $SCRIPT_DIR && SEMANTIC=${SEMANTIC:-0} ./run_t1_server.sh --mode $SLAM_MODE --backend $SLAM_BACKEND" C-m
 echo "  ${C_DIM}cold start loads 14G of weights, a few minutes is normal${C_R}"
 wait_until "waiting for :3636 to be ready" 900 bash -c "curl -s -m 3 $API/status | jq -e '.mode' >/dev/null" \
     || { echo "  check T1's screen: tmux attach -t $SESSION"; exit 1; }

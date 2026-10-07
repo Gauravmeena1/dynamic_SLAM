@@ -354,7 +354,7 @@ while true; do
     nd=$(ls -1 "$DEPLOY_DIR" 2>/dev/null | wc -l)
     [ "$nd" -ge 15 ] && { ok "收尾完成（$((SECONDS-t0))s，deploy $nd/15）"; break; }
     collect_alive || { ok "collect 視窗已結束（deploy $nd/15）"; break; }
-    [ $((SECONDS-t0)) -ge 1200 ] && { warn "20 分鐘還沒收完（deploy $nd/15），自己看：tmux attach -t $SESSION"; break; }
+    [ $((SECONDS-t0)) -ge "${KACHAKA_FINALIZE_TIMEOUT:-1200}" ] && { warn "$(( ${KACHAKA_FINALIZE_TIMEOUT:-1200} / 60 )) 分鐘還沒收完（deploy $nd/15），自己看：tmux attach -t $SESSION"; break; }
     sleep 5
 done
 
