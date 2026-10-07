@@ -7,7 +7,10 @@
 #   KACHAKA_SERVER_DIR_CT  SLAM server repo, path INSIDE the AI container (default /workspace/ma-long-server)
 #   KACHAKA_ROBOTIC_DIR    Kachaka bridge project (robot mode only)
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# values the caller already exported (e.g. `demo map3d`: runner, containers, SEMANTIC) win over .env
+_caller_env=$(declare -p $(compgen -v | grep -E '^(KACHAKA_[A-Z0-9_]*|SEMANTIC|COLLECT_EXTRA)$') 2>/dev/null)
 [ -f "$REPO/.env" ] && { set -a; . "$REPO/.env"; set +a; }
+[ -n "$_caller_env" ] && eval "$_caller_env"; unset _caller_env
 FUNGI_HOST="${KACHAKA_TOOLS_DIR:-/opt/kachaka/fungi}"
 GW_C="${KACHAKA_SLAM_CONTAINER:-gateway_slam}"
 SLAM_C="${KACHAKA_AI_CONTAINER:-slam_node}"

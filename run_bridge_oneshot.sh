@@ -19,7 +19,10 @@ set -uo pipefail
 
 # ── 執行環境（可由 .env 覆寫；見 .env.example）──────────────────────
 WORK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# values the caller already exported (e.g. `demo map3d`: runner, containers, SEMANTIC) win over .env
+_caller_env=$(declare -p $(compgen -v | grep -E '^(KACHAKA_[A-Z0-9_]*|SEMANTIC|COLLECT_EXTRA)$') 2>/dev/null)
 [ -f "$WORK/.env" ] && { set -a; source "$WORK/.env"; set +a; }
+[ -n "$_caller_env" ] && eval "$_caller_env"; unset _caller_env
 resolve_from_work() {
     case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$WORK" "$1" ;; esac
 }
@@ -170,7 +173,7 @@ if [ "$PLAN_ONLY" = 0 ]; then
 # 會讓 T1 一啟動就 ModuleNotFoundError，然後這裡一路等到 900s 逾時，看起來像「卡在 T1」。
 SLAM_SH="${KACHAKA_SLAM_RUNNER:-$HOME/ops/run_slam_oneshot.sh}"
 if [ -x "$SLAM_SH" ]; then
-    ok "SLAM 用修正版 $SLAM_SH（T1 走 run_t1_server_fixed.sh 的影子套件）"
+    ok "SLAM 用修正版 $SLAM_SH（T1 走 run_t1_server_fixed.sh 的影子套件）  SEMANTIC=${SEMANTIC:-0}"
 else
     SLAM_SH="$TOOLS/run_slam_oneshot.sh"
     [ -f "$SLAM_SH" ] || die "找不到 $SLAM_SH"
