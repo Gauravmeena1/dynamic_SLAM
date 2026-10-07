@@ -215,6 +215,8 @@ Never kill the SLAM server while it records or saves: the map in memory is lost.
 | 3D map, dynamic objects removed | `$KACHAKA_TOOLS_DIR/outputs_malong/RUN/static_only_pcd.ply` |
 | 3D map before removal / removed points only | `all_points_pcd.ply` / `dynamic_pcd.ply` (same folder) |
 | Points removed by 3D carving | `carved_pcd.ply` (same folder) |
+| TSDF-fused map, thinner surfaces (since 2026-10-06) | `combined_fused.ply` (same folder) |
+| Per-channel masks / reconstruction cache (only with `DYNAMIC_DUMP_MASKS=1` / `DYNAMIC_DUMP_RECON=1`) | `mask_channels/`, `recon_cache/` (same folder) |
 | Semantic map + deploy files (only with `SEMANTIC=1`) | `combined_pcd.ply` and the deploy folder (same folder) |
 | Every frame, coloured by channel + per-frame % | `mask_viz/*.jpg`, `mask_viz/removed.csv` |
 | Bird's-eye before / after | `bev_compare.png` (made by `bev_compare.py`) |
@@ -242,5 +244,6 @@ Open the `.ply` files in CloudCompare or MeshLab. The three point files are samp
 
 - Offline, `mapping_20260922_01` (389 frames, lab, people walking/sitting): with the geo gate, person-free frames with > 1 % removed 59/296 → 1/296; YOLO-channel removal unchanged; reproduced through this branch's `slam_tools` (mean removed 2.18 %, motion-only 0.08 %).
 - Live, map `lab_20260925` (ID c3bff72d): runs `run3`, `move1` (people walking, sitting, carrying a bottle removed). Map `lab_20260927` (ID 623d8033): `run1`, 10/19 goals.
-- Live with `SEMANTIC=1`, map `Map803_3`, run `map803_0930_run5` (181 frames, people leaning on a stool and boxes): person points left in the map (checked against SAM 3 outlines and sensor depth) 36,244 → 10,149 (person fill, bridge) → 5,225 → 3,546 (box fill down, edge ring, carving). Much of the rest is box edges under a hand. Alignment RMSE 0.077 m with the camera lever arm corrected; 57/68 semantic objects get a navigation goal.
+- Live, map `Map803_202610_06`, run `map803_1006_run2` (this version, see section 1): 85 % of removed pixels are people, basket and suitcase kept, alignment `rmse_all` 0.104 m.
+- 1 Oct version, live with `SEMANTIC=1`, map `Map803_3`, run `map803_0930_run5` (181 frames, people leaning on a stool and boxes): person points left in the map (checked against SAM 3 outlines and sensor depth) 36,244 → 10,149 (person fill, bridge) → 5,225 → 3,546 (box fill down, edge ring, carving). Much of the rest is box edges under a hand. Alignment RMSE 0.077 m with the camera lever arm corrected; 57/68 semantic objects get a navigation goal.
 - Without `SEMANTIC=1`, alignment cannot run (`align.sh` needs the semantic export that `--no_deploy` skips).
