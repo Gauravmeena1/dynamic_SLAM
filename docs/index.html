@@ -446,7 +446,9 @@ python preview_traj.py --map-yaml map.yaml --traj artifacts/runs/goals_demo.csv<
 cp &lt;method-folder&gt;/yolov9e-seg.pt dynamic_masking/
 cp -r &lt;method-folder&gt;/thirdparty dynamic_masking/
 set -a; . ./.env; set +a
-slam_integration/install.sh /path/to/ma-long-server "$KACHAKA_TOOLS_DIR"
+git submodule update --init ma-long          <span class="c"># SLAM server (shit6333/ma-long)</span>
+cp &lt;lab ma-long copy&gt;/src/ma_slam_stream/server_api.py ma-long/src/ma_slam_stream/
+slam_integration/install.sh ma-long "$KACHAKA_TOOLS_DIR"
 slam_tools/make_containers.sh             <span class="c"># only creates missing containers</span>
 
 <span class="c"># after every reboot</span>
@@ -505,6 +507,7 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
           <tr><td><code>preflight.sh</code>, <code>arm_cam_tune.sh</code></td><td>Read-only site checks; camera view and arm stow-pose tuning</td></tr>
           <tr><td><code>dynamic_masking/</code></td><td>The masking method: <code>chunk_fusion_masker.py</code> (fusion, object policy, geo gate), <code>dynamic_object_mask.py</code> (YOLO), <code>dynamic_fusion.py</code> + <code>flowseek_flow.py</code> (motion), <code>motion_compensation.py</code></td></tr>
           <tr><td><code>slam_integration/</code></td><td><code>fusion_solver.py</code> hooks the masker into the SLAM server, adds the live view and 3D carving; small patches for the server and camera gateway; idempotent <code>install.sh</code></td></tr>
+          <tr><td><code>ma-long/</code></td><td>Link to the SLAM server, <a href="https://github.com/shit6333/ma-long">shit6333/ma-long</a> (branch <code>semantic</code>, commit <code>e5ef8e5</code>); <code>server_api.py</code> comes from the lab's shared copy</td></tr>
           <tr><td><code>slam_tools/</code></td><td>Server and gateway launchers, live view, replay, robot control (<code>kachaka_ctl.py</code>), camera check, cleanup, bird's-eye comparison</td></tr>
           <tr><td><code>docs/</code></td><td>Guides, validation reports and this page</td></tr>
         </tbody>

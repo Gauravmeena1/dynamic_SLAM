@@ -1,0 +1,16 @@
+--- a/src/ma_slam_semantic/proposals.py
++++ b/src/ma_slam_semantic/proposals.py
+@@ -130,7 +130,12 @@
+                     continue
+             if cfg.min_points > 0 and P < cfg.min_points:
+                 continue
+-            vox = torch.unique((p / cfg.voxel_size).floor().long(), dim=0)
++            # unique(dim=0) on CUDA runs a merge_sort needing a large scratch buffer; it is
++            # the first allocation to fail when Thor's unified 122 GB is under pressure
++            # (cudaErrorIllegalAddress, 2026-09-22, 389-frame run with two vLLM containers
++            # resident). The result is moved to CPU on the very next line anyway, so doing
++            # the unique on CPU costs nothing and removes the failure mode entirely.
++            vox = torch.unique((p / cfg.voxel_size).floor().long().cpu(), dim=0)
+             slot = int(kept[k_local].item())
+             prop: Dict = {
+                 "center": p.median(dim=0).values.cpu(),

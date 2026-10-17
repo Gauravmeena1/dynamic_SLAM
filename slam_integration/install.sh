@@ -3,7 +3,9 @@
 #
 #   slam_integration/install.sh /path/to/ma-long-server [/path/to/workspace]
 #
-#   /path/to/ma-long-server  host path of the SLAM server repo
+#   /path/to/ma-long-server  host path of the SLAM server: the lab's ma-long copy, or this repo's
+#                            ma-long/ submodule (github.com/shit6333/ma-long, branch semantic,
+#                            commit e5ef8e5) plus src/ma_slam_stream/server_api.py from the lab copy
 #   /path/to/workspace       optional: KACHAKA_TOOLS_DIR (the folder mounted at /fungi); also patches
 #                            the camera gateway there: COLLECT_EXTRA passthrough (parked recordings)
 #                            and the RealSense 640x480 fallback for cameras on USB 2
@@ -12,6 +14,9 @@
 #    resolves inside a container that mounts both repos under one common parent folder)
 # 2. applies server_api.patch (the --dynamic_mask flag + masker wiring + live mask view)
 #    and viz.patch (viewer layout: 3D map | camera with removed pixels)
+# 3. applies the small server fixes: run_stream_split_clouds (offline runs export the split clouds),
+#    proposals_cpu_unique (CUDA out-of-memory fix in semantic mode), instance_map_is_dynamic, and
+#    ma_infer_force_input_k (the optional MA_FORCE_INPUT_K, off by default)
 # Safe to run twice: already-applied patches are detected and skipped.
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
@@ -34,8 +39,18 @@ apply() {   # apply DIR PATCHNAME — idempotent
         echo "✗ $2.patch does not apply cleanly to $1 — apply it by hand"; exit 1
     fi
 }
+if [ ! -f "$SRV/src/ma_slam_stream/server_api.py" ]; then
+    echo "✗ $SRV/src/ma_slam_stream/server_api.py is missing. The streaming server is not in the public"
+    echo "  ma-long repo: copy src/ma_slam_stream/server_api.py from the lab's shared ma-long copy"
+    echo "  (<fungi workspace>/semantic_slam/src/ma-long) into $SRV, then run install.sh again."
+    exit 1
+fi
 apply "$SRV" server_api
 apply "$SRV" viz
+apply "$SRV" run_stream_split_clouds
+apply "$SRV" proposals_cpu_unique
+apply "$SRV" instance_map_is_dynamic
+apply "$SRV" ma_infer_force_input_k
 if [ -n "${2:-}" ]; then
     WS="$2"
     [ -f "$WS/gateway_slam/src/gateway_node_robot.py" ] || { echo "$WS has no gateway_slam/src"; exit 1; }

@@ -1,0 +1,17 @@
+--- a/src/ma_slam_stream/run_stream.py
++++ b/src/ma_slam_stream/run_stream.py
+@@ -63,6 +63,14 @@
+     print(f"[ma_slam] done. {n} frames | submaps={slam.map.num_submaps()} "
+           f"loops={slam.graph.get_num_loops()} | poses -> {poses_txt}  pcd -> {combined_ply}")
+ 
++    # Dynamic-masking runs additionally export the three-way split so the removed
++    # content can be inspected on its own (FusionMaSlam only; no-op otherwise).
++    try:
++        from ma_slam.fusion_solver import export_split_clouds
++        export_split_clouds(slam, out, max_points=pc["max_points"], conf_coef=pc["conf_coef"])
++    except Exception as _e:
++        print(f"[ma_slam] split-cloud export skipped: {type(_e).__name__}: {_e}")
++
+     n_accept = sum(1 for ln in slam.loop_log if "ACCEPT" in ln)
+     stats = {
+         "backend": type(slam.model).__name__, "mode": mode,

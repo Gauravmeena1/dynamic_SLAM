@@ -1,0 +1,4 @@
+[submodule "ma-long"]
+	path = ma-long
+	url = https://github.com/shit6333/ma-long.git
+	branch = semantic

@@ -30,6 +30,7 @@ Project page: <https://gauravmeena1.github.io/dynamic_SLAM/>
 | `arm_cam_tune.sh` | Camera view and arm stow-pose tuning |
 | `dynamic_masking/` | Dynamic-object masking method |
 | `slam_integration/` | Hooks the masker into the SLAM server (`install.sh`, patches) |
+| `ma-long/` | The SLAM server, linked from [shit6333/ma-long](https://github.com/shit6333/ma-long) (branch `semantic`, commit `e5ef8e5`) |
 | `slam_tools/` | SLAM launchers, live view, replay, robot control |
 | `docs/` | Guides and validation reports |
 | `KNOWN_ISSUES.md` | Field issues, causes, and workarounds |
@@ -66,7 +67,13 @@ These commands do not use `--go`, so they never move hardware.
 
 ## Site configuration
 
-The field workflow also needs the Kachaka SDK, Docker containers, and the 3D SLAM toolchain.
+The field workflow also needs the Kachaka SDK, Docker containers, and the 3D SLAM toolchain. The SLAM server is ma-long, linked as `ma-long/`. It is another lab member's repository, so it is linked, not copied:
+
+```bash
+git submodule update --init ma-long      # or clone with --recurse-submodules
+```
+
+The streaming server file `src/ma_slam_stream/server_api.py` is not in the public ma-long repository; copy it from the lab's shared ma-long copy. Then `slam_integration/install.sh` adds the masking hook and the server fixes. See [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md).
 
 ```bash
 cp .env.example .env
@@ -113,7 +120,7 @@ GitHub Actions runs the same offline checks. Changes that affect the hardware al
 
 ## Credits
 
-The mapping route tools come from [h44343880/kachaka_mapping](https://github.com/h44343880/kachaka_mapping). Dynamic-object masking and the SLAM integration are by Gaurav.
+The mapping route tools come from [h44343880/kachaka_mapping](https://github.com/h44343880/kachaka_mapping). The SLAM server is [shit6333/ma-long](https://github.com/shit6333/ma-long). Dynamic-object masking and the SLAM integration are by Gaurav.
 
 ## License
 

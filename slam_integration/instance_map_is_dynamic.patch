@@ -1,0 +1,12 @@
+--- a/src/ma_slam_semantic/instance_map.py
++++ b/src/ma_slam_semantic/instance_map.py
+@@ -40,7 +40,8 @@
+     is_dynamic: bool = False
+ 
+     @classmethod
+-    def from_mask(cls, key: int, slot: int, objectness: float, mask: torch.Tensor) -> "Obs":
++    def from_mask(cls, key: int, slot: int, objectness: float, mask: torch.Tensor,
++                  is_dynamic: bool = False) -> "Obs":
+         m = mask.detach().cpu().numpy().astype(bool)
+         return cls(key=key, slot=slot, objectness=objectness,
+                    mask_bits=np.packbits(m), mask_shape=tuple(m.shape),

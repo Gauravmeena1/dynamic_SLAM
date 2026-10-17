@@ -1,0 +1,30 @@
+--- a/src/model/ma_infer.py
++++ b/src/model/ma_infer.py
+@@ -142,6 +142,27 @@
+         with torch.amp.autocast("cuda", enabled=False):
+             preds = self.model.infer(views, **infer_kwargs)
+ 
++        # MA_FORCE_INPUT_K=1 (2026-10-07): MapAnything is only *conditioned* on the calibrated K; it predicts
++        # its own ray directions and builds pts3d from them (map803: principal point +15/+12 px off at
++        # 518x392). Rebuild every frame's points as depth_z along the TRUE (input, preprocessed) rays, in the
++        # same camera pose, and report that K.
++        if os.environ.get("MA_FORCE_INPUT_K", "0") == "1" and "intr" in mode:
++            for i, p in enumerate(preds):
++                Kin = views[i].get("intrinsics")
++                if Kin is None or "depth_z" not in p or "camera_poses" not in p:
++                    continue
++                Kin = Kin.to(p["depth_z"].device).float().reshape(-1, 3, 3)
++                z = p["depth_z"][..., 0].float()                                  # (B, H, W)
++                B, H, W = z.shape
++                vv, uu = torch.meshgrid(torch.arange(H, device=z.device, dtype=z.dtype),
++                                        torch.arange(W, device=z.device, dtype=z.dtype), indexing="ij")
++                fx, fy = Kin[:, 0, 0].view(-1, 1, 1), Kin[:, 1, 1].view(-1, 1, 1)
++                cx, cy = Kin[:, 0, 2].view(-1, 1, 1), Kin[:, 1, 2].view(-1, 1, 1)
++                pc = torch.stack([(uu - cx) * z / fx, (vv - cy) * z / fy, z], -1)   # (B, H, W, 3)
++                T = p["camera_poses"].float()
++                pw = torch.einsum("bij,bhwj->bhwi", T[:, :3, :3], pc) + T[:, None, None, :3, 3]
++                p["pts3d"] = pw.to(p["pts3d"].dtype); p["intrinsics"] = Kin.to(p["intrinsics"].dtype)
++
+         def stack(key, fn=lambda t: t):
+             return torch.stack([fn(p[key])[0].float().cpu() for p in preds], dim=0)
+ 

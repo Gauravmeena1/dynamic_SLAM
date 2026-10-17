@@ -17,6 +17,8 @@ This branch adds Gaurav's dynamic-object masking to the live 3D SLAM run by `run
 | `slam_integration/fusion_solver.py` | Hooks the masker into the SLAM server between inference and point creation; live mask view |
 | `slam_integration/*.patch` | Small patches for the team's SLAM server (`server_api.py`, `viz.py`) and camera gateway (`gateway_node_robot.py`, `realsense.py`) |
 | `slam_integration/install.sh` | Links `fusion_solver.py` into a server checkout and applies the patches (idempotent) |
+| `slam_integration/{run_stream_split_clouds,proposals_cpu_unique,instance_map_is_dynamic,ma_infer_force_input_k}.patch` | Small server fixes: split-cloud export in offline runs, a CUDA out-of-memory fix in semantic mode, an `is_dynamic` argument, and the optional `MA_FORCE_INPUT_K` |
+| `ma-long/` | Link (git submodule) to the SLAM server, [shit6333/ma-long](https://github.com/shit6333/ma-long), branch `semantic`, commit `e5ef8e5` |
 | `slam_tools/` | Run, live-view, control and result tools (all machine values come from `.env`) |
 
 ### How the method decides / 方法
@@ -102,14 +104,20 @@ cp -r <method-folder>/thirdparty dynamic_masking/
 # 4. load .env into this shell (the commands below use its values)
 set -a; . ./.env; set +a
 
-# 5. hook the masker into your SLAM server checkout and patch the gateway workspace
-slam_integration/install.sh /path/to/ma-long-server  "$KACHAKA_TOOLS_DIR"
+# 5. the SLAM server. On the lab machine, use the lab's shared ma-long copy: it is the server the
+#    results were made with (the public repo plus team edits, including server_api.py).
+#    Elsewhere: fetch the linked public repo and add server_api.py from the lab copy.
+git submodule update --init ma-long
+cp <lab ma-long copy>/src/ma_slam_stream/server_api.py ma-long/src/ma_slam_stream/
 
-# 6. containers (only if they do not exist yet; running containers are never touched)
+# 6. hook the masker into the server and patch the gateway workspace
+slam_integration/install.sh /path/to/ma-long-server  "$KACHAKA_TOOLS_DIR"   # or: ma-long
+
+# 7. containers (only if they do not exist yet; running containers are never touched)
 slam_tools/make_containers.sh
 ```
 
-Check: `slam_integration/install.sh` prints four ✓ lines; `make_containers.sh` prints the mounts.
+Check: `slam_integration/install.sh` prints a ✓ line for the link and for each of the 8 patches (`already applied` on a second run); `make_containers.sh` prints the mounts.
 
 **Every new terminal:** run `cd dynamic_SLAM && set -a && . ./.env && set +a` first, so `$KACHAKA_…` values below are defined.
 
