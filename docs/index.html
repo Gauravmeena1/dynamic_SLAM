@@ -64,7 +64,6 @@ h1 { font-size: clamp(30px, 5.2vw, 48px); line-height: 1.12; letter-spacing: -.0
 .btn:hover { text-decoration: none; border-color: var(--accent); }
 .btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
 .btn svg { width: 18px; height: 18px; }
-.hero-fig { margin-top: 40px; }
 
 /* sections */
 section { padding: 48px 0; border-top: 1px solid var(--border); }
@@ -118,10 +117,6 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rule { background: var(--accent-soft); border-radius: 12px; padding: 14px 18px; margin: 18px 0 8px; font-size: 15px; }
 
 /* figures */
-figure { margin: 22px 0 0; }
-figure img { border-radius: 12px; border: 1px solid var(--border); width: 100%; background: #fff; }
-figcaption { font-size: 14px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
-figcaption b { color: var(--text); font-weight: 600; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
 @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: 1px; margin-right: 2px; }
@@ -199,10 +194,6 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
       <a class="btn" href="https://github.com/Gauravmeena1/dynamic_SLAM/blob/main/docs/DYNAMIC_MASKING.md">Masking guide</a>
       <a class="btn" href="#results">Results</a>
     </div>
-    <figure class="hero-fig">
-      <img src="assets/live_removal.jpg" alt="Four pairs of camera frames: raw frame on the left, the same frame with the person and a carried bottle covered by a red removal mask on the right" width="1600" height="608">
-      <figcaption>Live removal during mapping. Each pair shows the raw RGB frame and the pixels the masker removed (<span class="dot" style="background:var(--red)"></span>red = person/semantic channel). Walking people, close-ups, motion blur and a carried bottle are all removed before the frame reaches the map.</figcaption>
-    </figure>
   </div>
 </header>
 
@@ -303,16 +294,6 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
       </table>
     </div>
 
-    <div class="grid2">
-      <figure>
-        <img src="assets/coverage_plan.jpg" alt="Occupancy map with a planned serpentine route of 17 waypoints from a blue start dot to a red end dot" width="900" height="763" loading="lazy">
-        <figcaption><b>Stage 3 preview.</b> 17 goals, 10.2 m, blue = start, red = end, arrows show direction. The operator checks this before the robot moves.</figcaption>
-      </figure>
-      <figure>
-        <img src="assets/alignment_overlay.jpg" alt="2D map with the robot's logged path in green and the aligned SLAM camera path in blue, plus labelled semantic objects" width="783" height="455" loading="lazy">
-        <figcaption><b>Stage 7 alignment.</b> <span class="dot" style="background:var(--green)"></span>Robot path from the Pose2D log and <span class="dot" style="background:var(--blue)"></span>SLAM camera path after Sim(2) alignment, with semantic objects placed in the robot's map. The visible gap is the camera's 0.146 m lever arm; with it corrected the RMSE is 0.077 m.</figcaption>
-      </figure>
-    </div>
   </div>
 </section>
 
@@ -347,21 +328,6 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
         <div><b>3D carving</b>Using the camera's real depth, drop map points that frames only ever see on removed pixels; saved to <code>carved_pcd.ply</code>.<br><code>DYNAMIC_CARVE=1</code></div>
       </div>
     </div>
-
-    <div class="grid2">
-      <figure>
-        <img src="assets/false_positive_fix.jpg" alt="Two frames without people. Left: yellow motion-only masks on a door and shelf tops. Right: the same frames with nothing removed." width="1286" height="966" loading="lazy">
-        <figcaption><b>Geo gate removes false positives.</b> Left: before, the flow channel fired on a door edge and shelf tops while the camera turned (<span class="dot" style="background:var(--amber)"></span>yellow = motion only). Right: after, nothing is removed. Person-free frames with &gt;1 % removed fell from 59/296 to 1/296; the people removal was unchanged.</figcaption>
-      </figure>
-      <figure>
-        <img src="assets/carving_before_after.jpg" alt="Point-cloud renders: before, magenta person points visible; after, almost none" width="768" height="576" loading="lazy">
-        <figcaption><b>3D carving removes leftover person points.</b> Renders of the 3D map from two camera poses; <span class="dot" style="background:#e000e0"></span>magenta = points that lie on a person, blue = person outline. With the 1 Oct version, person points across the run fell from 36,244 to 3,546; v9 keeps about 6.2k, because it no longer removes the walls and objects around people.</figcaption>
-      </figure>
-    </div>
-    <figure>
-      <img src="assets/bev_before_after.jpg" alt="Top-down views of a lab 3D map before and after removal; the after view lacks the scattered person-shaped blobs in the middle of the room" width="1294" height="567" loading="lazy">
-      <figcaption><b>Live run with people walking through</b> (map <code>lab_20260925</code>, run <code>move1</code>). Top-down view of the 3D map before (left) and after (right) removal. The person-shaped smears in the open floor area disappear; walls and furniture are kept.</figcaption>
-    </figure>
 
     <h3>Watching it live</h3>
     <p class="sub" style="margin-bottom:0">While the robot maps, a web view shows the 3D map with removed points in red next to the camera panel, colour-coded by channel (<span class="dot" style="background:var(--red)"></span>semantic, <span class="dot" style="background:var(--amber)"></span>motion only, <span class="dot" style="background:var(--blue)"></span>bridge). Every frame is also saved to <code>mask_viz/</code> with a per-frame <code>removed.csv</code>.</p>
@@ -403,11 +369,6 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
       </table>
     </div>
     <p class="sub" style="margin-top:10px">The two detectors agree on 105 frames; their union covers 128. On the 6 Oct runs YOLO already finds the person in 98–99 % of the reference pixels, and a YOLO + SAM 3.1 ensemble gains little: the person points that remain come from depth spill around people, not from missed detections.</p>
-
-    <figure>
-      <img src="assets/map3d_views.jpg" alt="Two views of a coloured 3D point-cloud map of a lab room with the ceiling removed" width="1800" height="633" loading="lazy">
-      <figcaption><b>A finished 3D map</b> of a lab room (ceiling removed), bird's-eye and oblique views.</figcaption>
-    </figure>
   </div>
 </section>
 

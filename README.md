@@ -1,8 +1,6 @@
 # dynamic_SLAM
 
-Automatic 3D mapping with a Kachaka robot, with people and moving objects removed from the map.
-
-This repository runs automatic 3D mapping with a Kachaka robot. It plans a coverage route on the Kachaka 2D map, drives it, and records RGB-D video for a 3D SLAM server. While the map is built, the server removes people and moving objects. The 3D map is then aligned to the robot's 2D map.
+Automatic 3D mapping with a Kachaka robot. The robot follows a coverage route planned on its 2D map while an RGB-D camera records, and the SLAM server builds the 3D map and drops people and moving objects from it as it goes. At the end the 3D map is aligned to the robot's 2D map.
 
 Project page: <https://gauravmeena1.github.io/dynamic_SLAM/>
 
@@ -67,13 +65,13 @@ These commands do not use `--go`, so they never move hardware.
 
 ## Site configuration
 
-The field workflow also needs the Kachaka SDK, Docker containers, and the 3D SLAM toolchain. The SLAM server is ma-long, linked as `ma-long/`. It is another lab member's repository, so it is linked, not copied:
+The field workflow also needs the Kachaka SDK, Docker containers, and the 3D SLAM toolchain. The SLAM server is ma-long. It is maintained by another lab member, so it is included as a submodule (`ma-long/`) instead of a copy:
 
 ```bash
 git submodule update --init ma-long      # or clone with --recurse-submodules
 ```
 
-The streaming server file `src/ma_slam_stream/server_api.py` is not in the public ma-long repository; copy it from the lab's shared ma-long copy. Then `slam_integration/install.sh` adds the masking hook and the server fixes. See [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md).
+`src/ma_slam_stream/server_api.py` is not in the public ma-long repo yet, so copy it from the lab's ma-long copy. After that, `slam_integration/install.sh` adds the masking hook and our server fixes (details in [`docs/DYNAMIC_MASKING.md`](docs/DYNAMIC_MASKING.md)).
 
 ```bash
 cp .env.example .env
@@ -120,8 +118,8 @@ GitHub Actions runs the same offline checks. Changes that affect the hardware al
 
 ## Credits
 
-The mapping route tools come from [h44343880/kachaka_mapping](https://github.com/h44343880/kachaka_mapping). The SLAM server is [shit6333/ma-long](https://github.com/shit6333/ma-long). Dynamic-object masking and the SLAM integration are by Gaurav.
+Route planning tools: [h44343880/kachaka_mapping](https://github.com/h44343880/kachaka_mapping). SLAM server: [shit6333/ma-long](https://github.com/shit6333/ma-long). Dynamic-object masking and SLAM integration: Gaurav.
 
 ## License
 
-No license has been chosen yet. Without one, others may read the code but may not copy, modify, or redistribute it.
+No license yet.

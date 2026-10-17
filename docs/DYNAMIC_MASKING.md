@@ -25,7 +25,7 @@ This branch adds Gaurav's dynamic-object masking to the live 3D SLAM run by `run
 
 Per chunk of 16 frames:
 
-1. **Semantic (YOLOv9e-seg):** person confidence ≥ 0.15 (others ≥ 0.25). A person is always removed. Any other movable-class object is removed only if it is **moving** (≥ 30 % of its pixels have a flow residual above the frame threshold) or **carried**: it touches a person (10 px) and either moves or is **held** — at least 70 % of it inside the person's outline, within 25 cm of the person's depth, and at most 0.3 of the person's size. A phone in the hand is removed; a suitcase, laptop or bottle standing beside someone stays.
+1. **Semantic (YOLOv9e-seg):** person confidence ≥ 0.15 (others ≥ 0.25). A person is always removed. Any other movable-class object is removed only if it is **moving** (≥ 30 % of its pixels have a flow residual above the frame threshold) or **carried**: it touches a person (10 px) and either moves or is **held**, at least 70 % of it inside the person's outline, within 25 cm of the person's depth, and at most 0.3 of the person's size. A phone in the hand is removed; a suitcase, laptop or bottle standing beside someone stays.
 2. **Motion (FlowSeek optical flow vs. camera-pose flow):** adaptive threshold `median + 3·MAD`, checked against both neighbour frames. **Geo gate (new, default `anchor`):** a motion blob is kept only if it touches a movable-class detection (30 px). On the 22 Sept lab capture this cut person-free frames with more than 1 % removed from 59/296 to 1/296, with the people removal unchanged. Trade-off: an object YOLO cannot label is no longer removed by motion alone. `DYNAMIC_GEO_GATE=none` gives the old behaviour.
 3. **Bridge:** fills up to 3 frames without a YOLO detection when the same chunk has a detection before and after the gap (one side only is allowed for a person entering or leaving through the image border).
 4. **Person cleanup (since 2026-10-06, "v9"):** person masks grow by 5 px. The 1 Oct box fill is off: in live runs people stood against walls and glass, and the box rectangle swallowed the wall. Instead, **leg fill** adds pixels only below a person's outline, only when an occluder is in front, at lower-body depth, at least 10 cm behind the occluder and never on a detected object. Depth-jump ("flying") pixels within 8 px of a person are removed. The geo gate and carried growth are limited to 30 px around a person, and the bridge only fills at the source person's depth (±0.3 m).
@@ -166,13 +166,13 @@ Expected on `mapping_20260922_01` (389 frames): mean removed ≈ 2.2 % per frame
 # 1. make the 2D map in the Kachaka App (start from the dock), save it as VENUE, load it.
 
 # 2. drive the robot about 1 m off the dock into open space (planning from the dock fails)
-$PY slam_tools/kachaka_ctl.py goto X Y YAW          # ROBOT MOVES — or move it in the App
+$PY slam_tools/kachaka_ctl.py goto X Y YAW          # ROBOT MOVES, or move it in the App
 
 # 3. plan only (answer y to the map question), then look at the preview
 ./run_bridge_oneshot.sh --name RUN --venue VENUE --goal-timeout 60 --plan-only
 code artifacts/previews/preview_goals_RUN.png
 
-# 4. full run in tmux — answer y twice (map correct? / route OK, robot moves?)
+# 4. full run in tmux, answer y twice (map correct? / route OK, robot moves?)
 tmux new -s mapping
 ./run_bridge_oneshot.sh --name RUN --venue VENUE --reuse-map --goal-timeout 60
 ```
@@ -239,7 +239,7 @@ Open the `.ply` files in CloudCompare or MeshLab. The three point files are samp
 |---|---|
 | Session ends after 90 s: “no intrinsics arrived” | The gateway's tuned capture needs `$KACHAKA_TOOLS_DIR/semantic_slam/src/ma-long/src/ma_slam_stream/realsense.py`; T2 must print “intrinsics sent” |
 | “RealSense failed to start: Couldn't resolve requests” | Camera on USB 2; use a blue USB 3 port (a 640x480 fallback exists) |
-| “waiting for the run_slam action server — timed out” | Broken shared ROS 2 daemon; the launcher uses `--no-daemon` (see `tmux attach -t slam`, window T2) |
+| “waiting for the run_slam action server, timed out” | Broken shared ROS 2 daemon; the launcher uses `--no-daemon` (see `tmux attach -t slam`, window T2) |
 | Plan fails: goals 0.0x m apart / yaw jump > 145° | Robot on or next to the dock: move it ~1 m into open space and plan again |
 | Many goals time out | Robot carries a shelf; remove it or accept skipped goals |
 | 3D viewer empty on a laptop | Forward port 9876 as well as 9090 |
