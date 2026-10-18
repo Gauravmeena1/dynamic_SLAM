@@ -217,6 +217,7 @@ footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(-
     <h2>What's new</h2>
     <p class="sub">Latest changes in this repository. Every masking step has a switch in <code>.env</code>, and the 1 Oct version is kept on branch <code>v1-2026-10-01</code>.</p>
     <ol class="timeline">
+      <li><time>Oct 18, 2026</time><div><b>YOLO colour fix and dense map.</b> YOLO now gets the BGR colour order it expects: on a replay of run2 it finds a person in 87 frames instead of 80, and frames with a missed person drop from 11 to 3. A dense map (<code>combined_dense.ply</code>) keeps every kept pixel in 5 mm cubes, so small objects such as bottles stay visible.</div></li>
       <li><time>Oct 8, 2026</time><div><b>Held rule is the default.</b> An object touching a person is removed only if it moves or is held in the hand. It ran live on 5 and 6 Oct: a bottle in the hand was removed, every suitcase, laptop and standing bottle beside a person was kept.</div></li>
       <li><time>Oct 6, 2026</time><div><b>Masking v9, tested live on <code>map803_1006_run2</code>.</b> In live runs people stood against walls and glass, and the 1 Oct box fill removed walls and bags with them. The box fill is replaced by a narrow leg fill, every step is limited to the area around a person, static objects are protected, carving uses the camera's real depth, and a thinner fused map is written. Result: 85 % of removed pixels are people, alignment 0.104 m. <a href="#cleanup">Details</a></div></li>
       <li><time>Oct 5, 2026</time><div><b>Two fixes.</b> The box fill no longer swallows a suitcase standing beside a person, and a second recording on a running server no longer crashes.</div></li>
@@ -520,7 +521,6 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
       <div>
         <h3 style="margin-top:0">Being evaluated</h3>
         <ul class="plain">
-          <li>Giving YOLO its expected BGR colour order: on run2 it cut frames with a missed person from 11 to 3 (offline).</li>
           <li>Stopping the bridge in blurred turning frames.</li>
           <li>Using the robot's LiDAR pose as a prior to reduce SLAM drift.</li>
         </ul>
@@ -533,7 +533,7 @@ python3 slam_tools/live_view.py "$KACHAKA_TOOLS_DIR/outputs_malong/RUN" --mask -
 
 <footer>
   <div class="wrap">
-    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav. Mapping route tools from <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated 8 October 2026.
+    Kachaka automatic mapping and dynamic-object masking. Masking method and SLAM integration by Gaurav. Mapping route tools from <a href="https://github.com/h44343880/kachaka_mapping">h44343880/kachaka_mapping</a>. Last updated 18 October 2026.
   </div>
 </footer>
 

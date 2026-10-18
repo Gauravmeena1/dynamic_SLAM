@@ -48,9 +48,10 @@ Switches: put them in `.env`. Every `slam_tools` script loads it, also when `run
 | `DYNAMIC_CARRIED_RULE` | `touch_and_moving_or_held` | the held rule (default since 2026-10-08, used live on 5-6 Oct); `touch` = remove anything touching a person (old default), `touch_and_moving` = only if it moves |
 | `DYNAMIC_DUMP_MASKS` / `DYNAMIC_DUMP_RECON` | `0` | save per-channel masks (`mask_channels/`) / the reconstruction cache (`recon_cache/`) for offline analysis |
 | `MA_FORCE_INPUT_K` | `0` | rebuild points along the true camera rays (needs the matching SLAM-server change; small gain, left off) |
+| `DYNAMIC_YOLO_BGR` | `1` | give YOLO its expected BGR colour order (since 2026-10-18); `0` = the old RGB input |
 | `SEMANTIC` | unset (`--no_deploy`) | `1` = semantic instances + deploy files (~20 GB more GPU memory) |
 
-Fixed in code (not forwarded by `run_t1_server.sh`): `DYNAMIC_CARVE_DEPTH=sensor`, `DYNAMIC_STATIC_EVIDENCE=1` (min 2 views), `DYNAMIC_FUSED_MAP=1`.
+Fixed in code (not forwarded by `run_t1_server.sh`): `DYNAMIC_CARVE_DEPTH=sensor`, `DYNAMIC_STATIC_EVIDENCE=1` (min 2 views), `DYNAMIC_FUSED_MAP=1`, `DYNAMIC_DENSE_MAP=1` (voxel `DYNAMIC_DENSE_VOXEL=0.005`).
 
 ### Version 2026-10-06 (branch `v3-2026-10-06`)
 
@@ -58,7 +59,7 @@ Tested live on map `Map803_202610_06`, run `map803_1006_run2` (251 frames, 16/17
 - 85 % of removed pixels are people; the basket (0.1 %) and the suitcase (0.3 %) stay in the map.
 - Alignment PASS: `rmse_all` 0.104 m, scale 0.90.
 - Known issue: in blurred turning frames the bridge can still paste a person shape onto a static object (frames 35, 78, 108, 170).
-- Not fixed yet: `dynamic_object_mask.py` passes RGB to YOLO, which expects BGR. Swapping the channels lowered the run2 frames with a missed person from 11 to 3 in an offline test.
+- Since 2026-10-18 (branch `v9-2026-10-06`): YOLO gets BGR input (`DYNAMIC_YOLO_BGR=1`). On a replay of run2 YOLO finds a person in 87 frames instead of 80, and frames with a missed person drop from 11 to 3. The dense map `combined_dense.ply` is written next to the other maps. Branch `v3-2026-10-06` keeps the code exactly as tested live on run2.
 
 ---
 
@@ -224,6 +225,7 @@ Never kill the SLAM server while it records or saves: the map in memory is lost.
 | 3D map before removal / removed points only | `all_points_pcd.ply` / `dynamic_pcd.ply` (same folder) |
 | Points removed by 3D carving | `carved_pcd.ply` (same folder) |
 | TSDF-fused map, thinner surfaces (since 2026-10-06) | `combined_fused.ply` (same folder) |
+| Dense map: every kept pixel in 5 mm cubes, small objects stay visible (since 2026-10-18); person points carved from it | `combined_dense.ply`, `carved_dense_pcd.ply` (same folder) |
 | Per-channel masks / reconstruction cache (only with `DYNAMIC_DUMP_MASKS=1` / `DYNAMIC_DUMP_RECON=1`) | `mask_channels/`, `recon_cache/` (same folder) |
 | Semantic map + deploy files (only with `SEMANTIC=1`) | `combined_pcd.ply` and the deploy folder (same folder) |
 | Every frame, coloured by channel + per-frame % | `mask_viz/*.jpg`, `mask_viz/removed.csv` |

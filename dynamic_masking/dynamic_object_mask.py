@@ -83,10 +83,13 @@ class DynamicObjectDetector:
 
     def __init__(self, checkpoint_path: str, device: str = "cuda",
                  classes: Optional[List[int]] = None, conf: float = 0.25,
-                 class_conf: Optional[Dict[int, float]] = None):
+                 class_conf: Optional[Dict[int, float]] = None, bgr: bool = True):
         """class_conf (2026-09-03): optional per-class confidence overrides, e.g. {0: 0.15} keeps
         motion-blurred people (lab frame 48 scored 0.17 < 0.25) while every other class stays at
-        `conf`.  YOLO runs at the lowest threshold and the rest is filtered here."""
+        `conf`.  YOLO runs at the lowest threshold and the rest is filtered here.
+        bgr (2026-10-18): ultralytics treats a numpy image as BGR (OpenCV order), but the frames here are
+        RGB, so they are flipped before predict. On map803_1006_run2 this cut frames with a missed person
+        from 11 to 3. bgr=False gives the old behaviour."""
         from ultralytics import YOLO  # imported lazily: heavy, optional
         self.model = YOLO(checkpoint_path)
         self.device = device
@@ -94,6 +97,10 @@ class DynamicObjectDetector:
         self.conf = conf
         self.class_conf = dict(class_conf) if class_conf else {}
         self.last_detections: List[Dict] = []   # [{cls, name, conf, area}] from the last call
+        self.bgr = bool(bgr)
+
+    def _source(self, rgb_frame: np.ndarray) -> np.ndarray:
+        return np.ascontiguousarray(rgb_frame[..., ::-1]) if self.bgr else rgb_frame
 
     @torch.no_grad()
     def get_instances(self, rgb_frame: np.ndarray) -> List[Dict]:
@@ -102,7 +109,7 @@ class DynamicObjectDetector:
         last_detections so callers that only read that keep working."""
         H, W = rgb_frame.shape[:2]
         run_conf = min([self.conf] + list(self.class_conf.values()))
-        results = self.model.predict(source=rgb_frame, classes=self.classes, conf=run_conf,
+        results = self.model.predict(source=self._source(rgb_frame), classes=self.classes, conf=run_conf,
                                      save=False, verbose=False, device=self.device)
         out: List[Dict] = []
         for r in results:
@@ -131,7 +138,7 @@ class DynamicObjectDetector:
         H, W = rgb_frame.shape[:2]
         run_conf = min([self.conf] + list(self.class_conf.values()))
         results = self.model.predict(
-            source=rgb_frame, classes=self.classes, conf=run_conf,
+            source=self._source(rgb_frame), classes=self.classes, conf=run_conf,
             save=False, verbose=False, device=self.device,
         )
         mask = torch.zeros((H, W), dtype=torch.bool)

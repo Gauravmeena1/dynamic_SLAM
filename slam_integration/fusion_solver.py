@@ -82,7 +82,7 @@ def build_masker(device: str = "cuda", **kw):
     # person_conf 0.15 (others 0.25) — run_lab_slam_fusion.py:124's validated default
     semantic = DynamicObjectDetector(
         os.path.join(DYNAMIC_ROOT, "yolov9e-seg.pt"), device=device,
-        class_conf={0: 0.15})
+        class_conf={0: 0.15}, bgr=os.environ.get("DYNAMIC_YOLO_BGR", "1") == "1")
     # Retuned 2026-09-24 against mapping_20260922_01 (413 chunk-frames, sweep_fix*.csv).
     # The shipped adaptive_k=4.0 left the geometric channel SILENT in 50 % of the frames that
     # contain a person, while spending only 0.25 % of its false-positive budget -- far too
