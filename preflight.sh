@@ -158,7 +158,7 @@ echo "── 8. 殘留程序（上一趟失敗留下的）───────�
 # 注意：一趟正在跑的時候本來就會有一支 logger（run_bridge_oneshot 的 4/7 開的）。
 # 只有「沒有進行中的一趟卻還有 logger」或「同時有兩支以上」才是殘留 —— 兩支會對
 # 同一個 csv 重複寫入，時間戳會成對重複。
-stale=$(pgrep -af "log_kachaka_pose2d" | grep -v "preflight\|claude" || true)
+stale=$(pgrep -af "log_kachaka_pose2d" | grep -v "preflight" || true)
 n_log=$(printf '%s' "$stale" | grep -c . || true)
 run_active=0; tmux has-session -t bridge_oneshot 2>/dev/null && run_active=1
 if [ "$n_log" = 0 ]; then
