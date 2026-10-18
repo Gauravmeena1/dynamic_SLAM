@@ -181,6 +181,14 @@ class FusionMaSlam(MaSlam):
                     carve_dynamic_ply(self, graph, path)
                 except Exception as exc:                   # never lose the map over this
                     print(f"[fusion] WARNING: carving skipped: {type(exc).__name__}: {exc}")
+                if os.environ.get("DYNAMIC_DENSE_MAP", "1") == "1":
+                    try:
+                        dp = export_dense_map(self, graph, os.path.dirname(path),
+                                              voxel=float(os.environ.get("DYNAMIC_DENSE_VOXEL", "0.005")))
+                        if dp:                                 # same person-leftover check as the main map
+                            carve_dynamic_ply(self, graph, dp, carved_name="carved_dense_pcd.ply")
+                    except Exception as exc:
+                        print(f"[fusion] WARNING: dense map skipped: {type(exc).__name__}: {exc}")
                 if os.environ.get("DYNAMIC_FUSED_MAP", "1") == "1":
                     try:
                         export_fused_map(self, graph, os.path.dirname(path))
@@ -563,7 +571,45 @@ def export_fused_map(slam, graph, out_dir, voxel=0.005, trunc=0.015, conf_coef=0
     return path
 
 
-def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None):
+def export_dense_map(slam, graph, out_dir, voxel=0.005, conf_coef=0.75):
+    """combined_dense.ply: EVERY kept pixel (confident, valid, not dynamic) of every frame, merged into
+    `voxel` cubes (confidence-weighted mean position and colour). combined_pcd.ply keeps a random 2 M
+    points (~8 % of the pixels on map803_1006_run2), so small objects -- bottles, cups -- come out as a
+    sparse sprinkle; the fused TSDF averages slightly offset copies and erodes them. (2026-10-08)"""
+    keys, ws, ps, cs = [], [], [], []
+    for sm in slam.map.ordered():
+        if sm.is_lc:
+            continue
+        thr = sm.conf_threshold * conf_coef
+        for i in range(sm.n):
+            m = sm.conf[i] > thr
+            if getattr(sm, "mask", None) is not None:
+                m = m & sm.mask[i]
+            if not m.any():
+                continue
+            M = graph.get_pose(sm.key(i)) @ np.linalg.inv(sm.poses_local[i])
+            Q = sm.points[i].reshape(-1, 3)[m.reshape(-1)]
+            P = (Q @ M[:3, :3].T + M[:3, 3]).astype(np.float32)
+            w = np.asarray(getattr(sm, "conf_raw", sm.conf)[i], np.float32).reshape(-1)[m.reshape(-1)]
+            ps.append(P); ws.append(w); cs.append(np.asarray(sm.colors[i]).reshape(-1, 3)[m.reshape(-1)].astype(np.float32))
+    if not ps:
+        return None
+    P = np.concatenate(ps); W = np.concatenate(ws); C = np.concatenate(cs); del ps, ws, cs
+    k = np.floor(P / voxel).astype(np.int64)
+    k -= k.min(0)
+    span = k.max(0) + 1
+    key = (k[:, 0] * span[1] + k[:, 1]) * span[2] + k[:, 2]
+    _, inv = np.unique(key, return_inverse=True); inv = inv.ravel(); n = int(inv.max()) + 1
+    wsum = np.bincount(inv, W, n)
+    xyz = np.stack([np.bincount(inv, W * P[:, j], n) for j in range(3)], 1) / wsum[:, None]
+    rgb = np.stack([np.bincount(inv, W * C[:, j], n) for j in range(3)], 1) / wsum[:, None]
+    path = os.path.join(out_dir, "combined_dense.ply")
+    _write_ply(path, xyz.astype(np.float32), np.clip(rgb + 0.5, 0, 255).astype(np.uint8))
+    print(f"[fusion] dense map: {n:,} points ({1000 * voxel:.0f} mm voxels) from {len(P):,} pixels -> {path}")
+    return path
+
+
+def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None, carved_name="carved_pcd.ply"):
     """Multi-view check of the written map (2026-10-01).
 
     The per-pixel mask only keeps a frame's OWN dynamic pixels out of the map. A few points still
@@ -586,7 +632,7 @@ def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None):
     rm = (n_dyn >= min_dyn) & (n_sta <= max_static)
     if rm.any():
         _write_ply(path, xyz[~rm].astype(np.float32), rgb[~rm].astype(np.uint8))
-        _write_ply(os.path.join(os.path.dirname(path), "carved_pcd.ply"), xyz[rm].astype(np.float32), rgb[rm].astype(np.uint8))
+        _write_ply(os.path.join(os.path.dirname(path), carved_name), xyz[rm].astype(np.float32), rgb[rm].astype(np.uint8))
     print(f"[fusion] carving: {int(rm.sum()):,} of {len(xyz):,} map points removed "
           f"(seen on dynamic pixels >= {min_dyn}x, on kept pixels <= {max_static}x, {len(frames)} frames)")
     return int(rm.sum())
