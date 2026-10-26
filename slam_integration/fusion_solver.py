@@ -181,6 +181,24 @@ class FusionMaSlam(MaSlam):
                     carve_dynamic_ply(self, graph, path)
                 except Exception as exc:                   # never lose the map over this
                     print(f"[fusion] WARNING: carving skipped: {type(exc).__name__}: {exc}")
+                # live viewer (2026-10-19): the map layer streamed during the run is from before the
+                # 3D carving; at the end, replace it with the final carved map, and add the carved-out
+                # points to the red "removed" layer
+                if getattr(self, "viz_rr", None) is not None:
+                    try:
+                        rr = self.viz_rr
+                        xyz, rgb = _read_ply_xyzrgb(path)
+                        if len(xyz) > 1_500_000:
+                            idx = np.random.default_rng(0).choice(len(xyz), 1_500_000, replace=False)
+                            xyz, rgb = xyz[idx], rgb[idx]
+                        rr.log("world/points", rr.Clear(recursive=True))
+                        rr.log("world/points/final_carved", rr.Points3D(xyz.astype(np.float32), colors=rgb.astype(np.uint8)))
+                        cp = os.path.join(os.path.dirname(path), "carved_pcd.ply")
+                        if os.path.isfile(cp):
+                            cx, _ = _read_ply_xyzrgb(cp)
+                            rr.log("world/removed/carved", rr.Points3D(cx.astype(np.float32), colors=[255, 0, 0]))
+                    except Exception as exc:
+                        print(f"[fusion] final map viz skipped: {type(exc).__name__}: {exc}")
                 if os.environ.get("DYNAMIC_DENSE_MAP", "1") == "1":
                     try:
                         dp = export_dense_map(self, graph, os.path.dirname(path),
@@ -282,6 +300,24 @@ class FusionMaSlam(MaSlam):
         base = self._next_base
         sm = self._build_submap(base, image_paths, depth_paths, out)   # solver.py:329
 
+        # self-mask (2026-10-21, map803_1019_final/_clean): a part of the robot rig (white plate,
+        # 0.33 m from the camera, ~1.8 % of the image, bottom-left) is in every frame. It moves with
+        # the camera, so it was written into the map along the whole route. Pixels closer than
+        # DYNAMIC_MIN_DEPTH (m) are marked invalid for the map (not "dynamic": they never reach
+        # dynamic_pcd). Poses are unaffected. 0 disables.
+        min_d = float(os.environ.get("DYNAMIC_MIN_DEPTH", "0.40"))
+        if min_d > 0 and out.get("depth") is not None:
+            try:
+                D = np.asarray(out["depth"], np.float32)
+                D = D[..., 0] if D.ndim == 4 else D
+                near = (D > 0) & (D < min_d)
+                base_m = np.asarray(sm.mask, bool) if getattr(sm, "mask", None) is not None else np.ones(near.shape, bool)
+                if near.shape == base_m.shape and near.any():
+                    sm.mask = base_m & ~near
+                    print(f"[fusion] self-mask: {100.0 * near.mean():.2f}% of pixels closer than {min_d:.2f} m dropped")
+            except Exception as exc:
+                print(f"[fusion] WARNING: self-mask skipped: {type(exc).__name__}: {exc}")
+
         if conf_mean is not None:
             # submap.py:64 derived this from the *masked* mean; put the real one back
             sm.conf_threshold = conf_mean + 1e-6
@@ -372,7 +408,7 @@ class FusionMaSlam(MaSlam):
                 valid &= sm.mask
             n_kept = int((valid & ~dyn).sum())
             rate = min(1.0, budget / max(1, n_kept))
-            removed = []
+            removed, removed_rgb = [], []
             if self.mask_viz_dir:                          # per-frame timeline
                 csv = os.path.join(self.mask_viz_dir, "removed.csv")
                 new = not os.path.exists(csv)
@@ -413,12 +449,14 @@ class FusionMaSlam(MaSlam):
                         M = self.graph.get_pose(sm.key(i)) @ np.linalg.inv(sm.poses_local[i])
                         Q = sm.points[i][sel]
                         removed.append(Q @ M[:3, :3].T + M[:3, 3])
+                        removed_rgb.append(rgb[sel])
             if rr is not None and removed:
                 P = np.concatenate(removed).astype(np.float32)
+                C = np.concatenate(removed_rgb).astype(np.uint8)
                 n_draw = min(self.VIZ_MAX_REMOVED_PTS, int(round(len(P) * rate)))
                 if n_draw < len(P):
                     idx = np.random.default_rng(sm.base_id).choice(len(P), n_draw, replace=False)
-                    P = P[idx]
+                    P, C = P[idx], C[idx]
                 rr.log(f"world/removed/submap_{sm.base_id}",
                        rr.Points3D(P, colors=[255, 0, 0]))
         except Exception as exc:                           # never kill a live run
@@ -630,6 +668,14 @@ def carve_dynamic_ply(slam, graph, path, min_dyn=None, max_static=None, carved_n
     xyz, rgb = _read_ply_xyzrgb(path)
     n_dyn, n_sta = _count_observations(frames, xyz)
     rm = (n_dyn >= min_dyn) & (n_sta <= max_static)
+    # ratio rule (2026-10-19, map803_1019_zz1): a person standing still for ~30 frames leaves
+    # outline points that the mask missed in several frames, so they collect a few "kept" views
+    # and survive the rule above. Also remove points seen on removed pixels at least
+    # DYNAMIC_CARVE_RATIO_MIN_DYN times and at least DYNAMIC_CARVE_RATIO x as often as on kept ones.
+    ratio = float(os.environ.get("DYNAMIC_CARVE_RATIO", "1.0"))
+    if ratio > 0:
+        rmin = int(os.environ.get("DYNAMIC_CARVE_RATIO_MIN_DYN", "3"))
+        rm |= (n_dyn >= rmin) & (n_dyn >= ratio * n_sta)
     if rm.any():
         _write_ply(path, xyz[~rm].astype(np.float32), rgb[~rm].astype(np.uint8))
         _write_ply(os.path.join(os.path.dirname(path), carved_name), xyz[rm].astype(np.float32), rgb[rm].astype(np.uint8))

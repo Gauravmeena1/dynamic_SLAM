@@ -1,11 +1,17 @@
 --- a/src/ma_slam_stream/viz.py
 +++ b/src/ma_slam_stream/viz.py
-@@ -73,12 +73,20 @@
+@@ -73,12 +73,30 @@
          #                          eye icon in the entity tree to show them)
          try:
              import rerun.blueprint as rrb
-+            # + world/removed/**  red: pixels the dynamic masker kept out of the map
-+            #   camera/mask_overlay  [camera | removed pixels in red], live (fusion_solver)
++            # + world/removed/**      red: pixels the dynamic masker kept out of the map
++            #   camera/mask_overlay   [camera | removed pixels in red], live (fusion_solver)
++            # Three panels (2026-10-19):
++            #   left   full reconstruction = map + removed points in red + camera path (magenta)
++            #   middle camera | removed pixels
++            #   right  clean map = only the points kept in the map (no red, no camera path)
++            # Semantic instances are left out of both 3D views; add them back from the
++            # Blueprint panel if needed.
              rr.send_blueprint(rrb.Blueprint(
 -                rrb.Spatial3DView(
 -                    origin="world",
@@ -15,14 +21,18 @@
 +                rrb.Horizontal(
 +                    rrb.Spatial3DView(
 +                        origin="world",
-+                        name="map (red = removed by masking)",
-+                        overrides={
-+                            "world/instances/boxes": rrb.EntityBehavior(visible=False),
-+                        },
++                        name="full reconstruction (red = removed)",
++                        contents=["+ world/**", "- world/instances/**"],
 +                    ),
 +                    rrb.Spatial2DView(origin="camera/mask_overlay",
 +                                      name="camera | removed pixels"),
-+                    column_shares=[3, 2],
++                    rrb.Spatial3DView(
++                        origin="world",
++                        name="clean map (dynamic removed)",
++                        contents=["+ world/**", "- world/instances/**", "- world/removed/**",
++                                  "- world/trajectory/**", "- world/camera/**"],
++                    ),
++                    column_shares=[2, 2, 2],
                  ),
                  collapse_panels=False,
              ))
