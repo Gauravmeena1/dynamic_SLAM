@@ -366,7 +366,7 @@ def densify(pts, step):
     return dense
 
 
-def zigzag_path(comp, g, sx, sy, syaw, angle_deg, go_back):
+def zigzag_path(comp, g, sx, sy, syaw, angle_deg, go_back, laps=1):
     """沿可走區域的長軸走 Z 字形，回 [(x,y),...]（第一點是起點）或 None。
 
     走直線時相機只看得到正前方，兩側的牆與家具幾乎沒入鏡；Z 字形讓機頭輪流偏向兩側
@@ -437,6 +437,7 @@ def zigzag_path(comp, g, sx, sy, syaw, angle_deg, go_back):
         side = -side
     if len(pts) < 2:
         return None
+    n_fwd = len(pts)                       # pts[:n_fwd] = the forward zigzag (pts[0] = start)
 
     if go_back:
         # 掉頭拆成兩次各 ≤ ~130° 的轉向（drive_waypoints 預設拒絕 > 145° 的單步跳變，
@@ -472,6 +473,42 @@ def zigzag_path(comp, g, sx, sy, syaw, angle_deg, go_back):
                 if leg is None:
                     continue
                 pts += shortcut([g.rc_to_world(r, c) for r, c in leg], comp, g)[1:]
+
+    # laps > 1 (2026-10-21): drive the same zigzag + return again. The second lap sees every place
+    # from the same direction as the first, which is what loop closure needs (a single
+    # forward + return pass sees each place only once per direction: 0 loops on map803_1019_final).
+    # Between laps the robot turns around near the start in two steps, like the far-end turn.
+    if go_back and laps > 1:
+        fwd, back = pts[1:n_fwd], pts[n_fwd:]
+        s_of = lambda q: float((np.array(q) - center) @ u)
+
+        def link(q):
+            if seg_safe(comp, g, pts[-1], q):
+                pts.append(q)
+                return True
+            leg = bfs_path(comp, g.world_to_rc(*pts[-1]), g.world_to_rc(*q))
+            if leg is None:
+                return False
+            pts.extend(shortcut([g.rc_to_world(r, c) for r, c in leg], comp, g)[1:])
+            return True
+
+        for _ in range(laps - 1):
+            s_cur = s_of(pts[-1])
+            t_cur = float((np.array(pts[-1]) - center) @ v)
+            lr = lateral(s_cur + sign * 0.3)
+            if lr:
+                m = (lr[0] + lr[1]) / 2
+                edge = lr[1] if t_cur <= m else lr[0]
+                link(to_xy(s_cur + sign * 0.3, m + (edge - m) * 0.8))
+            lr = lateral(s_cur + sign * 0.9)
+            if lr:
+                link(to_xy(s_cur + sign * 0.9, (lr[0] + lr[1]) / 2))
+            s_go = s_of(pts[-1]) + sign * 0.3
+            for q in fwd:
+                if sign * (s_of(q) - s_go) > 0:
+                    link(q)
+            for q in back:
+                link(q)
     return pts
 
 
@@ -496,6 +533,9 @@ def main() -> int:
                          "so the camera sees both sides of a corridor")
     ap.add_argument("--zigzag-angle", type=float, default=40.0,
                     help="Z 字偏角 / Zigzag heading offset from the long axis in degrees (default: 40)")
+    ap.add_argument("--laps", type=int, default=1,
+                    help="With --zigzag-return: drive the zigzag + return this many times (2 = every place seen "
+                         "twice from the same direction, for loop closure)")
     ap.add_argument("--zigzag-return", action="store_true",
                     help="Z 字走到底後掉頭沿中線走回 / After the zigzag, turn around and drive back along the "
                          "centre line (the turn-around needs 120-150 degree turns; risky while carrying a shelf)")
@@ -579,7 +619,7 @@ def main() -> int:
         return finish(args, g, comp, pts, sx, sy, syaw)
 
     if args.pattern == "zigzag":
-        pts = zigzag_path(comp, g, sx, sy, syaw, args.zigzag_angle, args.zigzag_return)
+        pts = zigzag_path(comp, g, sx, sy, syaw, args.zigzag_angle, args.zigzag_return, args.laps)
         if not pts:
             return err("產生不出 Z 字路徑 —— 可走區域太窄或太短")
         print(f"Z 字 ±{args.zigzag_angle:.0f}°，{len(pts) - 1} 段"

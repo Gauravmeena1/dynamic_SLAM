@@ -152,8 +152,16 @@ class Clearance:
         return d * self.res
 
 
-def move_with_timeout(client, x, y, yaw, timeout_s):
-    """Run blocking move_to_pose with a deadline and cancel on timeout."""
+NEAR_ARRIVAL = "near"
+
+
+def move_with_timeout(client, x, y, yaw, timeout_s, near_tol=0.0, near_stall_s=0.0):
+    """Run blocking move_to_pose with a deadline and cancel on timeout.
+
+    With near_tol > 0: if the robot is within near_tol metres of the goal and has not
+    moved (< 2 cm, < 3 deg) for near_stall_s seconds, cancel and return NEAR_ARRIVAL.
+    Kachaka sometimes parks a few cm from a goal next to a wall and never reports
+    success (map803_1019_zz1 goal 5: 10 cm away, idle for 110 s until the timeout)."""
     result_q = queue.Queue(maxsize=1)
 
     def worker():
@@ -168,11 +176,35 @@ def move_with_timeout(client, x, y, yaw, timeout_s):
     # The worker must not keep the process alive if the gRPC call itself fails
     # to unwind after cancel_command().
     threading.Thread(target=worker, daemon=True).start()
-    try:
-        succeeded, value = result_q.get(timeout=timeout_s)
-    except queue.Empty:
-        client.cancel_command()
-        raise TimeoutError(f"move_to_pose 超過 {timeout_s:.0f} 秒")
+    deadline = time.monotonic() + timeout_s
+    still_since, last = None, None
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            client.cancel_command()
+            raise TimeoutError(f"move_to_pose 超過 {timeout_s:.0f} 秒")
+        try:
+            succeeded, value = result_q.get(timeout=min(0.5, left))
+            break
+        except queue.Empty:
+            pass
+        if near_tol <= 0:
+            continue
+        try:
+            p = client.get_robot_pose()
+        except Exception:
+            continue
+        now = time.monotonic()
+        if last is not None and math.hypot(p.x - last.x, p.y - last.y) < 0.02 \
+                and abs((p.theta - last.theta + math.pi) % (2 * math.pi) - math.pi) < math.radians(3):
+            if still_since is None:
+                still_since = now
+        else:
+            still_since, last = None, p
+        if still_since is not None and math.hypot(x - p.x, y - p.y) <= near_tol \
+                and now - still_since >= near_stall_s:
+            client.cancel_command()
+            return NEAR_ARRIVAL
     if not succeeded:
         raise value
     return value
@@ -243,6 +275,10 @@ def main() -> int:
     ap.add_argument("--settle", type=float, default=1.0, help="到位停留秒數 / Camera settling time at each goal")
     ap.add_argument("--goal-timeout", type=float, default=30.0,
                     help="單點 timeout / Per-goal timeout in seconds (default: 30; cancels before continuing)")
+    ap.add_argument("--near-tol", type=float, default=0.20,
+                    help="Accept a goal when the robot idles this close to it (m; 0 disables)")
+    ap.add_argument("--near-stall", type=float, default=8.0,
+                    help="Seconds the robot must stay still near the goal before it is accepted")
     ap.add_argument("--save-goals", default=None,
                     help="另存導航目標 CSV / Save thinned goals for preview_traj.py")
     args = ap.parse_args()
@@ -333,7 +369,8 @@ def main() -> int:
                   f"yaw {math.degrees(yaw):+7.1f}° ... ", end="", flush=True)
             ts = time.time()
             try:
-                res = move_with_timeout(c, x, y, yaw, args.goal_timeout)
+                res = move_with_timeout(c, x, y, yaw, args.goal_timeout,
+                                        args.near_tol, args.near_stall)
             except TimeoutError as exc:
                 timed_out += 1
                 print(f"\n     ⚠️ {exc}；已取消這個點，準備跳到下一點")
@@ -345,6 +382,14 @@ def main() -> int:
                 continue
             p = c.get_robot_pose()
             err = math.hypot(x - p.x, y - p.y)
+            if res == NEAR_ARRIVAL:
+                print(f"{time.time()-ts:5.1f}s  誤差 {err:.3f} m  ≈ near goal, robot idle "
+                      f"{args.near_stall:.0f}s → cancelled, next goal")
+                wait_for_command_stop(c)
+                ok += 1
+                if args.settle > 0:
+                    time.sleep(args.settle)
+                continue
             success = getattr(res, "success", None)
             print(f"{time.time()-ts:5.1f}s  誤差 {err:.3f} m"
                   f"{'' if success is None else ('  ✓' if success else f'  ✗ {res}')}")

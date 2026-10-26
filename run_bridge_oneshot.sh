@@ -40,7 +40,7 @@ KACHAKA_DEFAULT="${KACHAKA_ENDPOINT:-KACHAKA_IP:26400}"
 API="${KACHAKA_AI_API_URL:-http://localhost:3636}"
 
 NAME=""; VENUE=""; OLD_RUN=""; SPACING=0.6; CLEARANCE=0.40; PATTERN=boustrophedon
-ZIGZAG_ANGLE=40; ZIGZAG_RETURN=()
+ZIGZAG_ANGLE=40; ZIGZAG_RETURN=(); LAPS=1
 # 2026-09-16 新地圖實測：0.25/0.8 產生 32 點；0.4/1.0 只要約 23 點，
 # 最短點距反而更大、最大朝向差更小。每個 move_to_pose 都會停車收斂，所以採後者。
 GOAL_SPACING=0.4; MIN_STEP=1.0; MIN_GOAL_DISTANCE=0.15
@@ -63,6 +63,7 @@ usage() {
   --pattern P        boustrophedon（蛇行，預設 / default）| spiral（螺旋 / spiral）| zigzag（Z 字，走廊兩側都入鏡 / sees both corridor sides）
   --zigzag-angle DEG Z 字偏角 / Zigzag heading offset (default: 40)
   --zigzag-return    Z 字走到底後掉頭走回 / Drive back after the zigzag (120-150° turns)
+  --laps N           與 --zigzag-return 一起：整條來回走 N 次 / Drive the zigzag + return N times (2 = loop closures)
   --min-clearance M  最小淨空 / Minimum goal clearance (default: 0.40 m)
   --goal-spacing M   導航目標間距 / Navigation-goal spacing (default: 0.4 m)
   --min-step M       直線段合併間距 / Straight-segment merge distance (default: 1.0 m)
@@ -87,6 +88,7 @@ while [ $# -gt 0 ]; do
         --pattern)       PATTERN="$2"; shift 2 ;;
         --zigzag-angle)  ZIGZAG_ANGLE="$2"; shift 2 ;;
         --zigzag-return) ZIGZAG_RETURN=(--zigzag-return); shift ;;
+        --laps)          LAPS="$2"; shift 2 ;;
         --min-clearance) CLEARANCE="$2"; shift 2 ;;
         --goal-spacing)  GOAL_SPACING="$2"; shift 2 ;;
         --min-step)      MIN_STEP="$2"; shift 2 ;;
@@ -272,7 +274,7 @@ fi
 step "3/7 規劃路徑 + 出預覽圖"
 # ══════════════════════════════════════════════════════════════════════
 "$PY" "$WORK/make_bridge_traj.py" --map-yaml "$MAP_YAML" --spacing "$SPACING" --pattern "$PATTERN" \
-    --zigzag-angle "$ZIGZAG_ANGLE" "${ZIGZAG_RETURN[@]}" \
+    --zigzag-angle "$ZIGZAG_ANGLE" "${ZIGZAG_RETURN[@]}" --laps "$LAPS" \
     --min-clearance "$CLEARANCE" --endpoint "$ENDPOINT" --out "$TRAJ" \
     --preview "$PREVIEW_DIR/${NAME}_raw.png" || die "產生路徑失敗"
 
@@ -379,7 +381,7 @@ REG_CMD="conda run -n dualmap python register_runs.py \\
 if [ "$DO_ALIGN" = 1 ]; then
     warn "align.sh 會寫進 $TOOLS —— 你的帳號沒寫入權的話這步會失敗，要請 acm 帳號跑"
     echo; echo "  執行 $ALIGN_CMD"
-    $ALIGN_CMD || die "align.sh 失敗 —— 停在這裡，不要帶著半套資料往下跑"
+    POSE_LOG="$POSE_LOG" MAP_PNG="$MAP_PNG" MAP_YAML="$MAP_YAML" $ALIGN_CMD || die "align.sh 失敗 —— 停在這裡，不要帶著半套資料往下跑"
     if [ -n "$OLD_RUN" ]; then
         mkdir -p "$OUTPUT_DIR/align_bridge_${DATE}"
         echo; echo "  執行配準"
