@@ -73,7 +73,9 @@ class ChunkFusionMasker:
                  bridge_max_gap: int = 1, box_fill_down: float = 0.0, edge_ring_px: int = 0,
                  edge_jump_m: float = 0.10, held_frac: float = 0.7, held_depth_m: float = 0.25,
                  held_max_area_ratio: float = 0.3, box_fill_grow_px: int = 40, person_scope_px: int = 30,
-                 move_min_disp_m: float = 0.10, leg_fill: bool = False):
+                 move_min_disp_m: float = 0.10, leg_fill: bool = False,
+                 held_front_frac: float = 0.9, held_front_depth_m: float = 0.5,
+                 held_front_max_area_ratio: float = 0.6, held_carry_frames: int = 3):
         """Static-furniture gates (2026-09-04, §12).  DEFAULTS SINCE §12.1 (2026-09-08) are the
         "g_two_s5_grow" combination: geo_two_sided=True + two_sided_strong_factor=5.0 + grow_carried=True,
         with conf_gate_pct left OFF.  Chosen over plain two-sided/conf gating because it is the only
@@ -125,6 +127,15 @@ class ChunkFusionMasker:
         #   person_scope_px      motion blobs and carried-object growth are clipped to this distance from a
         #                        person, instead of keeping whole connected blobs that run along walls
         self.held_max_area_ratio = float(held_max_area_ratio)
+        # held in front (2026-10-19, live run map803_1019_zz1): a laptop held out at chest height sits
+        # 30 cm in FRONT of the body (depth_gap -0.30) and the person behind it is half hidden, so its
+        # size ratio is 0.49 -- both outside the held limits above. An object almost entirely inside the
+        # person's outline (>= held_front_frac) may also be up to held_front_depth_m in front of the
+        # person, with a looser size limit. Behind the person the 25 cm limit still applies.
+        # Over the 23 runs with object dumps this adds only laptop / book / phone / remote.
+        self.held_front_frac = float(held_front_frac); self.held_front_depth_m = float(held_front_depth_m)
+        self.held_front_max_area_ratio = float(held_front_max_area_ratio)
+        self.held_carry_frames = int(held_carry_frames)
         self.box_fill_grow_px = int(box_fill_grow_px); self.person_scope_px = int(person_scope_px)
         self.move_min_disp_m = float(move_min_disp_m)
         # leg_fill (2026-10-05): the narrow replacement for box fill. Only directly BELOW a person's
@@ -421,6 +432,10 @@ class ChunkFusionMasker:
                                 o["depth_gap"] = float(np.median(dep[k][om]) - np.median(dep[k][ring]))
                             held = o["held_frac"] >= self.held_frac and o.get("depth_gap") is not None \
                                 and abs(o["depth_gap"]) <= self.held_depth_m and o["size_ratio"] <= self.held_max_area_ratio
+                            held_front = o["held_frac"] >= self.held_front_frac and o.get("depth_gap") is not None \
+                                and -self.held_front_depth_m <= o["depth_gap"] <= self.held_depth_m \
+                                and o["size_ratio"] <= self.held_front_max_area_ratio
+                            held = held or held_front
                             o["carried"] = o["carried"] or held
                             o["held"] = bool(held)
                     else:
@@ -475,6 +490,65 @@ class ChunkFusionMasker:
                     sem_person[k] &= ~back; person_fill[k] &= ~back
                 obj_rm[k] = _clean(np.any(rm, axis=0)) if rm else False
                 sem[k] = sem_person[k] | obj_rm[k]
+            # held-object carry (2026-10-19, map803_1019_zz1): YOLO labels a hand-held laptop in only
+            # some frames. A removed HELD object is carried by optical flow into up to held_carry_frames
+            # neighbouring frames each way, kept only inside a person's hull and at the person's depth
+            # (from 0.6 m in front to 0.25 m behind), and taken out of the kept-object protection.
+            if self.held_carry_frames > 0 and T > 1:
+                held_m = [np.any([o["mask"] for o in objects[k] if o.get("held") and o["removed"]], axis=0)
+                          if any(o.get("held") and o["removed"] for o in objects[k]) else None for k in range(T)]
+                hull_k = [None] * T
+                for k in range(T):
+                    hs = []
+                    for d in inst[k]:
+                        if d["cls"] == 0 and d["mask"].any():
+                            cnts, _ = cv2.findContours(d["mask"].astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                            hm = np.zeros((H, W), np.uint8)
+                            cv2.fillPoly(hm, [cv2.convexHull(np.concatenate(cnts))], 1)
+                            hs.append(hm > 0)
+                    hull_k[k] = _dilate(np.any(hs, axis=0), self.attach_px) if hs else None
+
+                def _gate(k, m):
+                    if hull_k[k] is None:
+                        return None
+                    m = m & hull_k[k] & (dep[k] > 0)
+                    ring = _dilate(m, 30) & ~m & sem_person[k] & (dep[k] > 0)
+                    if m.sum() < 20 or ring.sum() < 20:
+                        return None
+                    pd = float(np.median(dep[k][ring]))
+                    return m & (dep[k] >= pd - 0.6) & (dep[k] <= pd + self.held_depth_m)
+
+                carried_in = np.zeros((T, H, W), bool)
+                for order, flows in ((range(T), lambda k: fwd[k]), (range(T - 1, -1, -1), lambda k: nxt[k])):
+                    carry, age = None, 0
+                    for k in order:
+                        if held_m[k] is not None:
+                            carry, age = held_m[k], 0
+                            continue
+                        if carry is None or age >= self.held_carry_frames or flows(k) is None:
+                            carry = None
+                            continue
+                        carry = warp_mask(carry, flows(k)); age += 1
+                        g = _gate(k, carry)
+                        if g is None or not g.any():
+                            carry = None
+                            continue
+                        carried_in[k] |= g
+                for k in range(T):
+                    if not carried_in[k].any():
+                        continue
+                    # a kept detection that the carried held object overlaps (>= 30 % of it) is the same
+                    # object, labelled but not judged held here (laptop half outside the hull): take its
+                    # whole mask. Large detections (TV, board: > held_front_max_area_ratio) are excluded.
+                    for o in objects[k]:
+                        if o["removed"] or not o["area"] or (o.get("size_ratio") or 9) > self.held_front_max_area_ratio:
+                            continue
+                        if (o["mask"] & carried_in[k]).sum() >= 0.3 * o["area"]:
+                            carried_in[k] |= o["mask"]; o["removed"] = True; o["held_carried"] = True
+                    if carried_in[k].any():
+                        obj_rm[k] |= carried_in[k]
+                        kept_obj[k] &= ~carried_in[k]
+                        sem[k] = sem_person[k] | obj_rm[k]
             for k in range(T):
                 for o in objects[k]: o.pop("mask", None)
 
