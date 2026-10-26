@@ -96,6 +96,8 @@ Safety gates:
 - Without `--go`, `drive_waypoints.py` only prints the plan.
 - The wrapper asks for confirmation before navigation; do not use `-y` on a first run.
 - `--reuse-map` checks the active Kachaka map ID.
+- A goal counts as reached when the robot stops within 20 cm of it for 8 s (`drive_waypoints.py --near-tol 0.20 --near-stall 8`).
+- `--zigzag-return --laps 2` drives the route twice, which gives the SLAM loop closures.
 - Ctrl+C, API errors, and timeouts trigger cancellation and cleanup.
 
 ## Dynamic-object masking
